@@ -9,8 +9,17 @@ export async function julesAPI(endpoint, method = 'GET', body = null) {
     headers: { 'Authorization': `Bearer ${GLOBAL_CONFIG.JULES_API_TOKEN}`, 'Content-Type': 'application/json' }
   };
   if (body) options.body = JSON.stringify(body);
-  const res = await fetch(`${JULES_API_BASE}${endpoint}`, options);
-  return res.json();
+  try {
+    const res = await fetch(`${JULES_API_BASE}${endpoint}`, options);
+    if (!res.ok) {
+      console.error(`[julesAPI] Error API: ${res.status} ${res.statusText}`);
+      return null;
+    }
+    return await res.json();
+  } catch (error) {
+    console.error(`[julesAPI] Network Error:`, error);
+    return null;
+  }
 }
 
 export async function startAndMonitorSession(instruction, agentName, project) {
@@ -30,6 +39,12 @@ export async function startAndMonitorSession(instruction, agentName, project) {
     // Boucle de surveillance infinie jusqu'à complétion ou échec
     while (true) {
       const state = await julesAPI(`/${sessionName}`);
+
+      if (!state) {
+        console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
+        await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+        continue;
+      }
 
       if (state.status === 'WAITING_FOR_PLAN_APPROVAL') {
         console.log(`[${project.id} - ${agentName}] ⏳ Validation automatique du plan...`);
