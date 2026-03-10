@@ -6,7 +6,7 @@ const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 export async function julesAPI(endpoint, method = 'GET', body = null) {
   const options = {
     method,
-    headers: { 'x-goog-api-key': GLOBAL_CONFIG.JULES_API_TOKEN, 'Content-Type': 'application/json' }
+    headers: { 'Authorization': `Bearer ${GLOBAL_CONFIG.JULES_API_TOKEN}`, 'Content-Type': 'application/json' }
   };
   if (body) options.body = JSON.stringify(body);
   try {
@@ -28,7 +28,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
 
   try {
-    const session = await julesAPI('/sessions', 'POST', { prompt: contextualizedInstruction });
+    const session = await julesAPI('/sessions', 'POST', { instruction: contextualizedInstruction });
     if (!session || !session.name) {
       console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session.`);
       return false;
