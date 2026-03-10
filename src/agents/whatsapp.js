@@ -1,6 +1,7 @@
 import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
 import { getNextGitHubIssue, closeGitHubIssue } from '../api/githubClient.js';
+import { isProjectLocked, incrementTasks, decrementTasks } from '../db/database.js';
 
 /**
  * Formats the instruction for the WhatsApp Agent with security delimiters and warnings.
@@ -15,14 +16,14 @@ export function formatIssueInstruction(issue) {
 export async function runWhatsAppAgent(project) {
   while (true) {
     try {
-      if (project.state.isLockedForDaily) {
+      if (isProjectLocked(project.id)) {
         await sleep(30000);
         continue;
       }
 
       const issue = await getNextGitHubIssue(project);
       if (issue) {
-        project.state.activeTasks++;
+        incrementTasks(project.id);
         console.log(`\n[${project.id} - WhatsApp] 📥 Issue #${issue.number} reçue : ${issue.title}`);
 
       const instruction = formatIssueInstruction(issue);
@@ -33,16 +34,14 @@ export async function runWhatsAppAgent(project) {
           console.log(`[${project.id} - WhatsApp] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);
           await closeGitHubIssue(project, issue.number);
         }
-        project.state.activeTasks--;
+        decrementTasks(project.id);
       }
 
       // Vérification toutes les 30 secondes
       await sleep(30000);
     } catch (error) {
        console.error(`[${project.id}] ❌ Erreur critique dans la boucle WhatsApp :`, error);
-       if (project.state.activeTasks > 0) {
-           project.state.activeTasks--;
-       }
+       decrementTasks(project.id);
        await sleep(60000);
     }
   }
