@@ -11,6 +11,11 @@ export async function runBackgroundAgent(project) {
       continue;
     }
 
+    if (!project.backgroundPrompts || project.backgroundPrompts.length === 0) {
+      console.log(`[${project.id}] ⚠️ Aucun prompt de fond configuré. Le Background Agent s'arrête.`);
+      return;
+    }
+
     project.state.activeTasks++; // On bloque une place
     const prompt = project.backgroundPrompts[index % project.backgroundPrompts.length];
 
