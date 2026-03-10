@@ -16,8 +16,14 @@ PROJECTS.forEach(project => {
     console.log(`⚙️  Initialisation du projet : ${project.id}`);
 
     // Lancement asynchrone des 3 cerveaux pour ce projet
-    runBackgroundAgent(project);
-    runWhatsAppAgent(project);
+    runBackgroundAgent(project).catch(err => {
+        console.error(`[${project.id}] 💥 Exception non gérée dans Background Agent:`, err);
+    });
+
+    runWhatsAppAgent(project).catch(err => {
+        console.error(`[${project.id}] 💥 Exception non gérée dans WhatsApp Agent:`, err);
+    });
+
     scheduleBuildAndMergePipeline(project);
   }
 });
