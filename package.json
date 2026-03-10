@@ -8,6 +8,8 @@
     "test": "node --test tests/*.test.js"
   },
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "express": "^5.2.1",
     "node-cron": "^3.0.3"
   }
 }

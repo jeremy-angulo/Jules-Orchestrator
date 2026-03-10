@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
 import { createAndMergePR } from '../api/githubClient.js';
+import { lockProject, unlockProject, incrementTasks, decrementTasks, getActiveTasks } from '../db/database.js';
 
 export function scheduleBuildAndMergePipeline(project) {
   if (!project.buildAndMergePipeline) return;
@@ -11,11 +12,11 @@ export function scheduleBuildAndMergePipeline(project) {
       console.log(`\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour le Build & Merge...`);
 
       // 1. Lever le drapeau rouge
-      project.state.isLockedForDaily = true;
+      lockProject(project.id);
 
       // 2. Attendre que les agents en cours finissent leur travail proprement
-      while (project.state.activeTasks > 0) {
-        console.log(`[${project.id} - Pipeline] ⏳ Attente de la fin de ${project.state.activeTasks} tâche(s) en cours...`);
+      while (getActiveTasks(project.id) > 0) {
+        console.log(`[${project.id} - Pipeline] ⏳ Attente de la fin de ${getActiveTasks(project.id)} tâche(s) en cours...`);
         await sleep(15000);
       }
 
@@ -26,7 +27,7 @@ export function scheduleBuildAndMergePipeline(project) {
         .replace(/{sourceBranch}/g, pipeline.sourceBranch)
         .replace(/{targetBranch}/g, pipeline.targetBranch);
 
-      project.state.activeTasks++;
+      incrementTasks(project.id);
 
       // 3. Jules valide, nettoie et commit sur dev
       const success = await startAndMonitorSession(prompt, "Build & Merge Agent", project);
@@ -41,12 +42,10 @@ export function scheduleBuildAndMergePipeline(project) {
     } catch (error) {
         console.error(`[${project.id} - Pipeline] ❌ Erreur critique lors du Build & Merge :`, error);
     } finally {
-        if (project.state.activeTasks > 0) {
-            project.state.activeTasks--;
-        }
+        decrementTasks(project.id);
         // 5. Baisse du drapeau rouge, les agents de fond reprennent
         console.log(`[${project.id} - Pipeline] 🔓 Pipeline terminé ! Déverrouillage du repo.`);
-        project.state.isLockedForDaily = false;
+        unlockProject(project.id);
     }
   });
 

@@ -1,17 +1,32 @@
+import express from 'express';
 import { PROJECTS } from './config.js';
 import { runBackgroundAgent } from './agents/background.js';
 import { runWhatsAppAgent } from './agents/whatsapp.js';
 import { scheduleBuildAndMergePipeline } from './agents/pipeline.js';
+import { initProjectState } from './db/database.js';
+
+
+// Serveur de santé pour Render
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.status(200).send('Orchestrator is alive');
+});
+app.get('/health', (req, res) => {
+    res.status(200).send('Orchestrator is alive');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 Serveur de santé démarré sur le port ${PORT}`);
+});
 
 console.log("🚀 Démarrage du Super-Orchestrateur Multi-Projets...");
 
 PROJECTS.forEach(project => {
   if (project.githubRepo) {
-    // Initialisation de l'état en mémoire pour sécuriser les conflits Git
-    project.state = {
-      isLockedForDaily: false,
-      activeTasks: 0
-    };
+    // Initialisation de l'état en base de données SQLite
+    initProjectState(project.id);
 
     console.log(`⚙️  Initialisation du projet : ${project.id}`);
 
