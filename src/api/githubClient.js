@@ -1,5 +1,5 @@
 export async function getNextGitHubIssue(project) {
-  const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/issues?state=open&sort=created&direction=asc`, {
+  const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/issues?state=open&sort=created&direction=asc&per_page=10`, {
     headers: { 'Authorization': `Bearer ${project.githubToken}`, 'Accept': 'application/vnd.github.v3+json' }
   });
   if (!res.ok) return null;
