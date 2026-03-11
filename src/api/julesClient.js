@@ -3,33 +3,154 @@ import { sleep } from '../utils/helpers.js';
 
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 
-export async function julesAPI(endpoint, method = 'GET', body = null) {
+/**
+ * Base API client for Jules REST API
+ */
+export async function julesAPI(endpoint, method = 'GET', body = null, queryParams = null) {
+  let url = `${JULES_API_BASE}${endpoint}`;
+
+  if (queryParams) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(queryParams)) {
+      if (value !== undefined && value !== null) {
+        params.append(key, value);
+      }
+    }
+    const queryString = params.toString();
+    if (queryString) {
+      url += `?${queryString}`;
+    }
+  }
+
   const options = {
     method,
-    headers: { 'X-Goog-Api-Key': `${GLOBAL_CONFIG.JULES_API_TOKEN}`, 'Content-Type': 'application/json' }
+    headers: { 'X-Goog-Api-Key': `${GLOBAL_CONFIG.JULES_API_TOKEN}` }
   };
-  if (body) options.body = JSON.stringify(body);
+
+  if (body) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+
   try {
-    const res = await fetch(`${JULES_API_BASE}${endpoint}`, options);
+    const res = await fetch(url, options);
     if (!res.ok) {
-      console.error(`[julesAPI] Error API: ${res.status} ${res.statusText}`);
+      let errorDetails = '';
+      try {
+        const errJson = await res.json();
+        errorDetails = JSON.stringify(errJson);
+      } catch (e) {
+        errorDetails = await res.text().catch(() => '');
+      }
+      console.error(`[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
       return null;
     }
-    return await res.json();
+
+    // Some endpoints like DELETE might return empty responses
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
   } catch (error) {
     console.error(`[julesAPI] Network Error:`, error);
     return null;
   }
 }
 
-export async function startAndMonitorSession(instruction, agentName, project) {
-  // On ajoute le repository de force dans le prompt (il n'y a pas de paramètre API dédié d'après la doc Google Jules API).
-  const contextualizedInstruction = `[CONTEXTE: Tu dois travailler UNIQUEMENT sur le repository GitHub "${project.githubRepo}"]\n\n${instruction}`;
+// ==========================================
+// SOURCES METHODS
+// ==========================================
 
+export async function listSources(pageSize, pageToken, filter) {
+  return julesAPI('/sources', 'GET', null, { pageSize, pageToken, filter });
+}
+
+export async function getSource(sourceId) {
+  const safeId = sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`;
+  return julesAPI(`/${safeId}`);
+}
+
+// ==========================================
+// SESSIONS METHODS
+// ==========================================
+
+export async function createSession(prompt, title, sourceId, startingBranch, automationMode) {
+  const body = {
+    prompt,
+    title,
+    sourceContext: {
+      source: sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`,
+      githubRepoContext: {
+        startingBranch: startingBranch || 'main'
+      }
+    }
+  };
+
+  if (automationMode) {
+    body.automationMode = automationMode;
+  }
+
+  return julesAPI('/sessions', 'POST', body);
+}
+
+export async function listSessions(pageSize, pageToken) {
+  return julesAPI('/sessions', 'GET', null, { pageSize, pageToken });
+}
+
+export async function getSession(sessionId) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}`);
+}
+
+export async function deleteSession(sessionId) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}`, 'DELETE');
+}
+
+export async function sendMessage(sessionId, message) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}:sendMessage`, 'POST', { prompt: message });
+}
+
+export async function approvePlan(sessionId) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}:approvePlan`, 'POST', {});
+}
+
+// ==========================================
+// ACTIVITIES METHODS
+// ==========================================
+
+export async function listActivities(sessionId, pageSize, pageToken, createTime) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}/activities`, 'GET', null, { pageSize, pageToken, createTime });
+}
+
+export async function getActivity(sessionId, activityId) {
+  const safeSessionId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeSessionId}/activities/${activityId}`);
+}
+
+// ==========================================
+// WORKFLOW METHODS
+// ==========================================
+
+/**
+ * Starts a Jules session and monitors it until completion or failure.
+ */
+export async function startAndMonitorSession(instruction, agentName, project) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
 
   try {
-    const session = await julesAPI('/sessions', 'POST', { prompt: contextualizedInstruction });
+    // Format sourceId: replace '/' with '-' and prepend 'github-'
+    const formattedSourceId = `sources/github-${project.githubRepo.replace('/', '-')}`;
+
+    // Create the session
+    const session = await createSession(
+      instruction,
+      `${agentName} Task for ${project.id}`,
+      formattedSourceId,
+      'main' // Defaulting to main, might need to be configurable
+    );
+
     if (!session || !session.name) {
       console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session.`);
       return false;
@@ -39,7 +160,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
 
     // Boucle de surveillance infinie jusqu'à complétion ou échec
     while (true) {
-      const state = await julesAPI(`/${sessionName}`);
+      const state = await getSession(sessionName);
 
       if (!state) {
         console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
@@ -56,7 +177,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
         return false;
       }
 
-      // On attend avant de revérifier l'état (par défaut 15 secondes)
+      // On attend avant de revérifier l'état
       await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
     }
   } catch (e) {
