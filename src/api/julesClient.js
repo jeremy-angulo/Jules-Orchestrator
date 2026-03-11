@@ -148,7 +148,8 @@ export async function startAndMonitorSession(instruction, agentName, project) {
       instruction,
       `${agentName} Task for ${project.id}`,
       formattedSourceId,
-      'main' // Defaulting to main, might need to be configurable
+      'main', // Defaulting to main, might need to be configurable
+      "AUTO_CREATE_PR"
     );
 
     if (!session || !session.name) {
@@ -169,7 +170,23 @@ export async function startAndMonitorSession(instruction, agentName, project) {
       }
 
       if (state.state === 'COMPLETED') {
-        console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès !`);
+        // Anti-Triche : Vérifier qu'une PR a bien été créée
+        let hasPR = false;
+        if (state.outputs && Array.isArray(state.outputs)) {
+          for (const output of state.outputs) {
+            if (output.pullRequest) {
+              hasPR = true;
+              break;
+            }
+          }
+        }
+
+        if (!hasPR) {
+          console.warn(`[\u26A0\uFE0F ${project.id} - ${agentName}] Session COMPLETED mais aucune Pull Request détectée !`);
+          return false;
+        }
+
+        console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès et PR détectée !`);
         return true;
       }
       else if (state.state === 'FAILED') {

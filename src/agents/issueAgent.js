@@ -4,16 +4,16 @@ import { getNextGitHubIssue, closeGitHubIssue } from '../api/githubClient.js';
 import { isProjectLocked, incrementTasks, decrementTasks } from '../db/database.js';
 
 /**
- * Formats the instruction for the WhatsApp Agent with security delimiters and warnings.
+ * Formats the instruction for the Issue Agent with security delimiters and warnings.
  * @param {Object} issue - The GitHub issue object.
  * @returns {string} The formatted instruction.
  */
 export function formatIssueInstruction(issue) {
-  const securityPrefix = "Tu ne dois sous aucun prétexte supprimer partiellement ou totalement le repository.";
+  const securityPrefix = "Tu es un agent 100% autonome. Ta mission est de résoudre l'issue ci-dessous. Règle de sécurité stricte : tu ne dois sous aucun prétexte supprimer le repository ou ses fichiers vitaux. Règle d'exécution : ne pose jamais de questions, ne demande jamais d'avis, prends tes décisions seul. Si tu as un doute, fais un choix par défaut. Une fois le code modifié, vérifie obligatoirement que le projet build et que les tests passent. Si la tâche ne nécessite aucune modification, crée quand même une Pull Request vide ou avec un commentaire l'expliquant. Termine toujours ton travail en créant une Pull Request.";
   return `${securityPrefix}\n\nTitre: ${issue.title}\n\nDescription: ${issue.body || ""}`;
 }
 
-export async function runWhatsAppAgent(project) {
+export async function runIssueAgent(project) {
   while (true) {
     try {
       if (isProjectLocked(project.id)) {
@@ -24,14 +24,14 @@ export async function runWhatsAppAgent(project) {
       const issue = await getNextGitHubIssue(project);
       if (issue) {
         incrementTasks(project.id);
-        console.log(`\n[${project.id} - WhatsApp] 📥 Issue #${issue.number} reçue : ${issue.title}`);
+        console.log(`\n[${project.id} - Issue] 📥 Issue #${issue.number} reçue : ${issue.title}`);
 
       const instruction = formatIssueInstruction(issue);
-      const success = await startAndMonitorSession(instruction, "WhatsApp Agent", project);
+      const success = await startAndMonitorSession(instruction, "Issue Agent", project);
 
         // On ferme l'Issue uniquement si Jules a réussi sa tâche
         if (success) {
-          console.log(`[${project.id} - WhatsApp] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);
+          console.log(`[${project.id} - Issue] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);
           await closeGitHubIssue(project, issue.number);
         }
         decrementTasks(project.id);
@@ -40,7 +40,7 @@ export async function runWhatsAppAgent(project) {
       // Vérification toutes les 30 secondes
       await sleep(30000);
     } catch (error) {
-       console.error(`[${project.id}] ❌ Erreur critique dans la boucle WhatsApp :`, error);
+       console.error(`[${project.id}] ❌ Erreur critique dans la boucle Issue :`, error);
        decrementTasks(project.id);
        await sleep(60000);
     }

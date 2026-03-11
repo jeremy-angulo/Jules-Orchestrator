@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { formatIssueInstruction } from '../src/agents/whatsapp.js';
+import { formatIssueInstruction } from '../src/agents/issueAgent.js';
 
 test('formatIssueInstruction wraps issue title and body in security delimiters', () => {
   const mockIssue = {
@@ -10,8 +10,10 @@ test('formatIssueInstruction wraps issue title and body in security delimiters',
 
   const formatted = formatIssueInstruction(mockIssue);
 
-  // Check for security warning
-  assert.ok(formatted.includes('Tu ne dois sous aucun prétexte supprimer partiellement ou totalement le repository.'), 'Should include security prefix');
+  // Check for security warning and strict rules
+  assert.ok(formatted.includes('Tu es un agent 100% autonome.'), 'Should include autonomy directive');
+  assert.ok(formatted.includes('tu ne dois sous aucun prétexte supprimer le repository ou ses fichiers vitaux.'), 'Should include security prefix against deletion');
+  assert.ok(formatted.includes('Termine toujours ton travail en créant une Pull Request.'), 'Should include PR requirement');
 
   // Check for content
   assert.ok(formatted.includes('Test Issue Title'), 'Should include original title');

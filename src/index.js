@@ -1,7 +1,7 @@
 import express from 'express';
 import { PROJECTS } from './config.js';
 import { runBackgroundAgent } from './agents/background.js';
-import { runWhatsAppAgent } from './agents/whatsapp.js';
+import { runIssueAgent } from './agents/issueAgent.js';
 import { scheduleBuildAndMergePipeline } from './agents/pipeline.js';
 import { runSessionMonitor } from './agents/sessionMonitor.js';
 import { initProjectState } from './db/database.js';
@@ -40,8 +40,8 @@ PROJECTS.forEach(project => {
         console.error(`[${project.id}] 💥 Exception non gérée dans Background Agent:`, err);
     });
 
-    runWhatsAppAgent(project).catch(err => {
-        console.error(`[${project.id}] 💥 Exception non gérée dans WhatsApp Agent:`, err);
+    runIssueAgent(project).catch(err => {
+        console.error(`[${project.id}] 💥 Exception non gérée dans Issue Agent:`, err);
     });
 
     scheduleBuildAndMergePipeline(project);
