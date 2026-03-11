@@ -4,7 +4,8 @@ export async function getNextGitHubIssue(project) {
       headers: { 'Authorization': `Bearer ${project.githubToken}`, 'Accept': 'application/vnd.github.v3+json' }
     });
     if (!res.ok) {
-        console.error(`[${project.id} - GitHub] API Error fetching issues: ${res.status} ${res.statusText}`);
+        const errorText = await res.text();
+        console.error(`[${project.id} - GitHub] API Error fetching issues: ${res.status} ${res.statusText} - ${errorText}`);
         return null;
     }
     const issues = await res.json();
