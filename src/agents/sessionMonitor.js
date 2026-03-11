@@ -1,24 +1,31 @@
-import { julesAPI } from '../api/julesClient.js';
 import { sleep } from '../utils/helpers.js';
 import { GLOBAL_CONFIG } from '../config.js';
+import { listSessions, approvePlan, sendMessage } from '../api/julesClient.js';
 
 export async function runSessionMonitor() {
   console.log("👁️  Démarrage du moniteur global de sessions Jules...");
 
   while (true) {
     try {
-      // 1. Fetch all sessions
-      const sessionsResponse = await julesAPI('/sessions', 'GET');
+      let activeSessions = [];
+      let pageToken = undefined;
 
-      if (!sessionsResponse || !sessionsResponse.sessions) {
-         console.error("[SessionMonitor] ⚠️ Impossible de récupérer la liste des sessions. Réessai dans quelques secondes...");
-         await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
-         continue;
-      }
+      // 1. Fetch all sessions with pagination
+      do {
+        const sessionsResponse = await listSessions(100, pageToken);
 
-      const activeSessions = sessionsResponse.sessions.filter(s =>
-        s.state !== 'COMPLETED' && s.state !== 'FAILED' && s.state !== 'QUEUED' && s.state !== 'STATE_UNSPECIFIED'
-      );
+        if (!sessionsResponse || !sessionsResponse.sessions) {
+           console.error("[SessionMonitor] ⚠️ Impossible de récupérer la liste des sessions. Réessai dans quelques secondes...");
+           break; // Break pagination loop on error, retry on next main loop iteration
+        }
+
+        const filtered = sessionsResponse.sessions.filter(s =>
+          s.state !== 'COMPLETED' && s.state !== 'FAILED' && s.state !== 'QUEUED' && s.state !== 'STATE_UNSPECIFIED'
+        );
+        activeSessions = activeSessions.concat(filtered);
+
+        pageToken = sessionsResponse.nextPageToken;
+      } while (pageToken);
 
       if (activeSessions.length > 0) {
           console.log(`[SessionMonitor] 🔎 Surveillance de ${activeSessions.length} session(s) active(s)...`);
@@ -26,14 +33,12 @@ export async function runSessionMonitor() {
 
       // 2. Iterate and check state
       for (const session of activeSessions) {
-        if (session.state === 'WAITING_FOR_PLAN_APPROVAL') {
+        if (session.state === 'AWAITING_PLAN_APPROVAL') {
            console.log(`[SessionMonitor] ⏳ Session ${session.id} en attente d'approbation du plan. Validation automatique...`);
-           await julesAPI(`/${session.name}:approvePlan`, 'POST', {});
+           await approvePlan(session.name);
         } else if (session.state === 'AWAITING_USER_FEEDBACK') {
            console.log(`[SessionMonitor] 💬 Session ${session.id} bloquée en attente d'un retour. Injection de "keep going"...`);
-           await julesAPI(`/${session.name}:sendMessage`, 'POST', {
-               message: "keep going"
-           });
+           await sendMessage(session.name, "keep going");
         }
       }
 

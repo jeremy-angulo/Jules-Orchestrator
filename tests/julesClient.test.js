@@ -11,62 +11,67 @@ const mockProject = {
 // Replace polling interval for faster tests
 GLOBAL_CONFIG.POLLING_INTERVAL = 10;
 
-test('julesAPI - handles network errors', async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => { throw new Error('Fetch failed'); };
+test('julesAPI - handles network errors', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('Fetch failed'); });
 
   const result = await julesAPI('/test');
   assert.strictEqual(result, null);
-
-  global.fetch = originalFetch;
 });
 
-test('julesAPI - handles non-ok status', async () => {
-  const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized', text: async () => 'error text' });
+test('julesAPI - handles non-ok status', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 401, statusText: 'Unauthorized', text: async () => 'error text' }));
 
   const result = await julesAPI('/test');
   assert.strictEqual(result, null);
-
-  global.fetch = originalFetch;
 });
 
-test('startAndMonitorSession - fails if session creation fails', async () => {
-    const originalFetch = global.fetch;
-    global.fetch = async () => ({ ok: false, status: 500, statusText: 'Server Error', text: async () => 'error text' });
+test('startAndMonitorSession - fails if session creation fails', async (t) => {
+    t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 500, statusText: 'Server Error', text: async () => 'error text' }));
 
     const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
     assert.strictEqual(result, false);
-
-    global.fetch = originalFetch;
 });
 
-test('startAndMonitorSession - completes successfully', async () => {
-    const originalFetch = global.fetch;
+test('startAndMonitorSession - completes successfully and verifies PR', async (t) => {
     let callCount = 0;
 
-    global.fetch = async (url, options) => {
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
       callCount++;
       if (callCount === 1) { // Session creation
         return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
       }
       if (callCount === 2) { // First poll -> COMPLETED
-        return { ok: true, text: async () => JSON.stringify({ state: 'COMPLETED' }) };
+        return { ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { title: "My PR" } }] }) };
       }
       return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
-    };
+    });
 
     const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
     assert.strictEqual(result, true);
-
-    global.fetch = originalFetch;
 });
 
-test('startAndMonitorSession - fails when session status is FAILED', async () => {
-  const originalFetch = global.fetch;
+test('startAndMonitorSession - fails if no PR detected on COMPLETED', async (t) => {
+    let callCount = 0;
+
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      callCount++;
+      if (callCount === 1) { // Session creation
+        return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
+      }
+      if (callCount === 2) { // First poll -> COMPLETED but no PR in outputs
+        return { ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ somethingElse: "Not a PR" }] }) };
+      }
+      return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
+    });
+
+    const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
+    assert.strictEqual(result, false);
+});
+
+test('startAndMonitorSession - fails when session status is FAILED', async (t) => {
   let callCount = 0;
 
-  global.fetch = async (url, options) => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
     callCount++;
     if (callCount === 1) { // Session creation
       return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
@@ -75,19 +80,16 @@ test('startAndMonitorSession - fails when session status is FAILED', async () =>
       return { ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) };
     }
     return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
-  };
+  });
 
   const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
   assert.strictEqual(result, false);
-
-  global.fetch = originalFetch;
 });
 
-test('startAndMonitorSession - handles missing state (null) robustly', async () => {
-  const originalFetch = global.fetch;
+test('startAndMonitorSession - handles missing state (null) robustly', async (t) => {
   let callCount = 0;
 
-  global.fetch = async (url, options) => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
     callCount++;
     if (callCount === 1) { // Session creation
       return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
@@ -99,10 +101,8 @@ test('startAndMonitorSession - handles missing state (null) robustly', async () 
       return { ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) };
     }
     return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
-  };
+  });
 
   const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
   assert.strictEqual(result, false);
-
-  global.fetch = originalFetch;
 });
