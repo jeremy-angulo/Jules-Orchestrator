@@ -15,8 +15,10 @@ test('julesAPI - handles network errors', async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => { throw new Error('Fetch failed'); };
 
-  const result = await julesAPI('/test');
-  assert.strictEqual(result, null);
+  await assert.rejects(
+    async () => await julesAPI('/test'),
+    { message: 'Fetch failed' }
+  );
 
   global.fetch = originalFetch;
 });
@@ -25,8 +27,10 @@ test('julesAPI - handles non-ok status', async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized' });
 
-  const result = await julesAPI('/test');
-  assert.strictEqual(result, null);
+  await assert.rejects(
+    async () => await julesAPI('/test'),
+    { message: '[julesAPI] Error API: 401 Unauthorized' }
+  );
 
   global.fetch = originalFetch;
 });
@@ -98,7 +102,7 @@ test('startAndMonitorSession - handles missing state (null) robustly', async () 
     if (callCount === 1) { // Session creation
       return { ok: true, json: async () => ({ name: 'sessions/123' }) };
     }
-    if (callCount === 2) { // First poll -> API returns 500 Error, so julesAPI returns null
+    if (callCount === 2) { // First poll -> API returns 500 Error, so julesAPI throws
       return { ok: false, status: 500, statusText: 'Server Error' };
     }
     if (callCount === 3) { // Second poll -> API recovers, status FAILED (to end test)
@@ -109,6 +113,7 @@ test('startAndMonitorSession - handles missing state (null) robustly', async () 
 
   const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
   assert.strictEqual(result, false);
+  assert.strictEqual(callCount, 3); // Ensure it actually retried
 
   global.fetch = originalFetch;
 });

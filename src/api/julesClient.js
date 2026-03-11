@@ -9,17 +9,12 @@ export async function julesAPI(endpoint, method = 'GET', body = null) {
     headers: { 'X-Goog-Api-Key': `${GLOBAL_CONFIG.JULES_API_TOKEN}`, 'Content-Type': 'application/json' }
   };
   if (body) options.body = JSON.stringify(body);
-  try {
-    const res = await fetch(`${JULES_API_BASE}${endpoint}`, options);
-    if (!res.ok) {
-      console.error(`[julesAPI] Error API: ${res.status} ${res.statusText}`);
-      return null;
-    }
-    return await res.json();
-  } catch (error) {
-    console.error(`[julesAPI] Network Error:`, error);
-    return null;
+
+  const res = await fetch(`${JULES_API_BASE}${endpoint}`, options);
+  if (!res.ok) {
+    throw new Error(`[julesAPI] Error API: ${res.status} ${res.statusText}`);
   }
+  return await res.json();
 }
 
 export async function startAndMonitorSession(instruction, agentName, project) {
@@ -29,7 +24,14 @@ export async function startAndMonitorSession(instruction, agentName, project) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
 
   try {
-    const session = await julesAPI('/sessions', 'POST', { prompt: contextualizedInstruction });
+    let session;
+    try {
+      session = await julesAPI('/sessions', 'POST', { prompt: contextualizedInstruction });
+    } catch (e) {
+      console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session: ${e.message}`);
+      return false;
+    }
+
     if (!session || !session.name) {
       console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session.`);
       return false;
@@ -39,7 +41,14 @@ export async function startAndMonitorSession(instruction, agentName, project) {
 
     // Boucle de surveillance infinie jusqu'à complétion ou échec
     while (true) {
-      const state = await julesAPI(`/${sessionName}`);
+      let state;
+      try {
+        state = await julesAPI(`/${sessionName}`);
+      } catch (e) {
+        console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (${e.message}). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
+        await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+        continue;
+      }
 
       if (!state) {
         console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
