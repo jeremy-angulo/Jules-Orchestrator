@@ -115,8 +115,17 @@ test('createAndMergePR - handles "No commits between" gracefully', async (t) => 
     throw new Error('Unexpected URL: ' + url);
   });
 
+  const consoleLogMock = t.mock.method(console, 'log', () => {});
+  const consoleErrorMock = t.mock.method(console, 'error', () => {});
+
   await createAndMergePR(mockProject, 'dev', 'main');
+
   assert.strictEqual(fetchMock.mock.calls.length, 1);
+  assert.strictEqual(consoleErrorMock.mock.calls.length, 0);
+
+  const logCalls = consoleLogMock.mock.calls.map(c => c.arguments[0]);
+  const hasExpectedLog = logCalls.some(msg => msg && msg.includes('Pas de PR nécessaire'));
+  assert.strictEqual(hasExpectedLog, true, 'Should log gracefully that no PR is needed');
 });
 
 test('createAndMergePR - handles PR creation JSON error', async (t) => {
