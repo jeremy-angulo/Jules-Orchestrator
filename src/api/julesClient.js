@@ -23,8 +23,9 @@ export async function julesAPI(endpoint, method = 'GET', body = null) {
 }
 
 export async function startAndMonitorSession(instruction, agentName, project) {
-  // On force le contexte du repository pour que Jules ne se perde pas
+  // On ajoute le repository de force dans le prompt (il n'y a pas de paramètre API dédié d'après la doc Google Jules API).
   const contextualizedInstruction = `[CONTEXTE: Tu dois travailler UNIQUEMENT sur le repository GitHub "${project.githubRepo}"]\n\n${instruction}`;
+
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
 
   try {
@@ -46,22 +47,22 @@ export async function startAndMonitorSession(instruction, agentName, project) {
         continue;
       }
 
-      if (state.status === 'WAITING_FOR_PLAN_APPROVAL') {
+      if (state.state === 'WAITING_FOR_PLAN_APPROVAL') {
         console.log(`[${project.id} - ${agentName}] ⏳ Validation automatique du plan...`);
         await julesAPI(`/${sessionName}:approvePlan`, 'POST');
       }
-      else if (state.status === 'WAITING_FOR_USER_INPUT') {
+      else if (state.state === 'AWAITING_USER_FEEDBACK') {
         // LA ROBUSTESSE EST ICI : On débloque Jules instantanément sans intervention humaine
         console.log(`[${project.id} - ${agentName}] 💬 Jules demande un avis -> Déblocage automatique envoyé ("Keep going").`);
         await julesAPI(`/${sessionName}:sendMessage`, 'POST', {
           message: "Keep going, resolve any errors autonomously and finish the task without waiting for further input."
         });
       }
-      else if (state.status === 'COMPLETED') {
+      else if (state.state === 'COMPLETED') {
         console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès !`);
         return true;
       }
-      else if (state.status === 'FAILED') {
+      else if (state.state === 'FAILED') {
         console.log(`[${project.id} - ${agentName}] ❌ Échec de la tâche côté Jules.`);
         return false;
       }
