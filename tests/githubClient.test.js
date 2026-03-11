@@ -159,3 +159,39 @@ test('createAndMergePR - handles auto-merge failure gracefully', async (t) => {
   await createAndMergePR(mockProject, 'dev', 'main');
   assert.strictEqual(fetchMock.mock.calls.length, 2);
 });
+
+test('closeGitHubIssue - success (asserts fetch parameters)', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async (url, options) => {
+    return {
+      ok: true
+    };
+  });
+
+  await closeGitHubIssue(mockProject, 123);
+
+  assert.strictEqual(fetchMock.mock.calls.length, 1);
+  const call = fetchMock.mock.calls[0];
+  assert.strictEqual(call.arguments[0], 'https://api.github.com/repos/test/repo/issues/123');
+  assert.strictEqual(call.arguments[1].method, 'PATCH');
+  assert.strictEqual(call.arguments[1].headers['Authorization'], 'Bearer fake-token');
+  assert.strictEqual(call.arguments[1].headers['Accept'], 'application/vnd.github.v3+json');
+  assert.strictEqual(call.arguments[1].headers['Content-Type'], 'application/json');
+  assert.deepStrictEqual(JSON.parse(call.arguments[1].body), { state: 'closed' });
+});
+
+test('closeGitHubIssue - logs API error gracefully', async (t) => {
+  const consoleErrorMock = t.mock.method(console, 'error', () => {});
+  const fetchMock = t.mock.method(globalThis, 'fetch', async () => {
+    return {
+      ok: false,
+      status: 403,
+      statusText: 'Forbidden'
+    };
+  });
+
+  await closeGitHubIssue(mockProject, 123);
+
+  assert.strictEqual(fetchMock.mock.calls.length, 1);
+  assert.strictEqual(consoleErrorMock.mock.calls.length, 1);
+  assert.match(consoleErrorMock.mock.calls[0].arguments[0], /API Error closing issue #123: 403 Forbidden/);
+});
