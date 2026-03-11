@@ -47,18 +47,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
         continue;
       }
 
-      if (state.state === 'WAITING_FOR_PLAN_APPROVAL') {
-        console.log(`[${project.id} - ${agentName}] ⏳ Validation automatique du plan...`);
-        await julesAPI(`/${sessionName}:approvePlan`, 'POST');
-      }
-      else if (state.state === 'AWAITING_USER_FEEDBACK') {
-        // LA ROBUSTESSE EST ICI : On débloque Jules instantanément sans intervention humaine
-        console.log(`[${project.id} - ${agentName}] 💬 Jules demande un avis -> Déblocage automatique envoyé ("Keep going").`);
-        await julesAPI(`/${sessionName}:sendMessage`, 'POST', {
-          message: "Keep going, resolve any errors autonomously and finish the task without waiting for further input."
-        });
-      }
-      else if (state.state === 'COMPLETED') {
+      if (state.state === 'COMPLETED') {
         console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès !`);
         return true;
       }
