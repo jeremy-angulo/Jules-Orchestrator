@@ -1,0 +1,631 @@
+import { sleep } from '../utils/helpers.js';
+import { startAndMonitorSession } from '../api/julesClient.js';
+import { isProjectLocked, incrementTasks, decrementTasks } from '../db/database.js';
+
+export async function runBackgroundAgent(project) {
+  if (!project.backgroundPrompts || project.backgroundPrompts.length === 0) {
+      console.log(`[${project.id}] ℹ️ Aucun prompt background configuré pour ce projet.`);
+      return;
+  }
+
+  // Parallélisation des prompts : un agent par prompt
+  await Promise.all(project.backgroundPrompts.map(async (prompt, index) => {
+    while (true) {
+      try {
+        // Vérification du verrouillage : Si le Pipeline quotidien se prépare, on attend.
+        if (isProjectLocked(project.id)) {
+          console.log(`[${project.id}] 🛑 Background Agent ${index} en pause (Le Pipeline quotidien arrive)...`);
+          await sleep(60000);
+          continue;
+        }
+
+        incrementTasks(project.id); // On bloque une place
+
+        await startAndMonitorSession(prompt, `Background Agent ${index}`, project);
+
+        decrementTasks(project.id); // On libère la place
+
+        // Pause de 5 minutes entre chaque tâche de fond
+        await sleep(300000);
+      } catch (error) {
+         console.error(`[${project.id}] ❌ Erreur critique dans la boucle background ${index} :`, error);
+         // Assurer qu'on libère la place s'il y a eu une erreur et qu'on l'a incrémentée
+         decrementTasks(project.id);
+         // Attendre avant de réessayer pour éviter de spammer
+         await sleep(60000);
+      }
+    }
+  }));
+}
+import { sleep } from '../utils/helpers.js';
+import { GLOBAL_CONFIG } from '../config.js';
+import { listSessions, approvePlan, sendMessage } from '../api/julesClient.js';
+
+export async function runSessionMonitor() {
+  console.log("👁️  Démarrage du moniteur global de sessions Jules...");
+
+  while (true) {
+    try {
+      let activeSessions = [];
+      let pageToken = undefined;
+
+      // 1. Fetch all sessions with pagination
+      do {
+        const sessionsResponse = await listSessions(100, pageToken);
+
+        if (!sessionsResponse || !sessionsResponse.sessions) {
+           console.error("[SessionMonitor] ⚠️ Impossible de récupérer la liste des sessions. Réessai dans quelques secondes...");
+           break; // Break pagination loop on error, retry on next main loop iteration
+        }
+
+        const filtered = sessionsResponse.sessions.filter(s =>
+          s.state !== 'COMPLETED' && s.state !== 'FAILED' && s.state !== 'QUEUED' && s.state !== 'STATE_UNSPECIFIED'
+        );
+        activeSessions = activeSessions.concat(filtered);
+
+        pageToken = sessionsResponse.nextPageToken;
+      } while (pageToken);
+
+      if (activeSessions.length > 0) {
+          console.log(`[SessionMonitor] 🔎 Surveillance de ${activeSessions.length} session(s) active(s)...`);
+      }
+
+      // 2. Iterate and check state
+      for (const session of activeSessions) {
+        if (session.state === 'AWAITING_PLAN_APPROVAL') {
+           console.log(`[SessionMonitor] ⏳ Session ${session.id} en attente d'approbation du plan. Validation automatique...`);
+           await approvePlan(session.name);
+        } else if (session.state === 'AWAITING_USER_FEEDBACK') {
+           console.log(`[SessionMonitor] 💬 Session ${session.id} bloquée en attente d'un retour. Injection de "keep going"...`);
+           await sendMessage(session.name, "keep going");
+        }
+      }
+
+      await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+    } catch (error) {
+      console.error("[SessionMonitor] ❌ Erreur critique dans la boucle de surveillance :", error);
+      await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+    }
+  }
+}
+import cron from 'node-cron';
+import { sleep } from '../utils/helpers.js';
+import { startAndMonitorSession } from '../api/julesClient.js';
+import { createAndMergePR } from '../api/githubClient.js';
+import { lockProject, unlockProject, incrementTasks, decrementTasks, getActiveTasks } from '../db/database.js';
+
+export function scheduleBuildAndMergePipeline(project) {
+  if (!project.buildAndMergePipeline) return;
+
+  cron.schedule(project.buildAndMergePipeline.cronSchedule, async () => {
+    try {
+      console.log(`\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour le Build & Merge...`);
+
+      // 1. Lever le drapeau rouge
+      lockProject(project.id);
+
+      // 2. Attendre que les agents en cours finissent leur travail proprement
+      while (getActiveTasks(project.id) > 0) {
+        console.log(`[${project.id} - Pipeline] ⏳ Attente de la fin de ${getActiveTasks(project.id)} tâche(s) en cours...`);
+        await sleep(15000);
+      }
+
+      console.log(`[${project.id} - Pipeline] 🚀 Repo libre ! Jules vérifie le build sur la branche ${project.buildAndMergePipeline.sourceBranch}.`);
+
+      const pipeline = project.buildAndMergePipeline;
+      const prompt = pipeline.prompt
+        .replace(/{sourceBranch}/g, pipeline.sourceBranch)
+        .replace(/{targetBranch}/g, pipeline.targetBranch);
+
+      incrementTasks(project.id);
+
+      // 3. Jules valide, nettoie et commit sur dev
+      const success = await startAndMonitorSession(prompt, "Build & Merge Agent", project);
+
+      // 4. Si Jules a réussi à stabiliser le build, Node.js crée la PR et la fusionne
+      if (success) {
+        await createAndMergePR(project, pipeline.sourceBranch, pipeline.targetBranch);
+      } else {
+        console.log(`[${project.id} - Pipeline] ⚠️ Jules a échoué à réparer le build. L'auto-merge est annulé par sécurité.`);
+      }
+
+    } catch (error) {
+        console.error(`[${project.id} - Pipeline] ❌ Erreur critique lors du Build & Merge :`, error);
+    } finally {
+        decrementTasks(project.id);
+        // 5. Baisse du drapeau rouge, les agents de fond reprennent
+        console.log(`[${project.id} - Pipeline] 🔓 Pipeline terminé ! Déverrouillage du repo.`);
+        unlockProject(project.id);
+    }
+  });
+
+  console.log(`[${project.id}] 🗓️ Pipeline planifié avec le cron : ${project.buildAndMergePipeline.cronSchedule}`);
+}
+import { sleep } from '../utils/helpers.js';
+import { startAndMonitorSession } from '../api/julesClient.js';
+import { getNextGitHubIssue, closeGitHubIssue } from '../api/githubClient.js';
+import { isProjectLocked, incrementTasks, decrementTasks } from '../db/database.js';
+
+/**
+ * Formats the instruction for the Issue Agent with security delimiters and warnings.
+ * @param {Object} issue - The GitHub issue object.
+ * @returns {string} The formatted instruction.
+ */
+export function formatIssueInstruction(issue) {
+  const securityPrefix = "Tu es un agent 100% autonome. Ta mission est de résoudre l'issue ci-dessous. Règle de sécurité stricte : tu ne dois sous aucun prétexte supprimer le repository ou ses fichiers vitaux. Règle d'exécution : ne pose jamais de questions, ne demande jamais d'avis, prends tes décisions seul. Si tu as un doute, fais un choix par défaut. Une fois le code modifié, vérifie obligatoirement que le projet build et que les tests passent. Si la tâche ne nécessite aucune modification, crée quand même une Pull Request vide ou avec un commentaire l'expliquant. Termine toujours ton travail en créant une Pull Request.";
+  return `${securityPrefix}\n\nTitre: ${issue.title}\n\nDescription: ${issue.body || ""}`;
+}
+
+export async function runIssueAgent(project) {
+  while (true) {
+    try {
+      if (isProjectLocked(project.id)) {
+        await sleep(30000);
+        continue;
+      }
+
+      const issue = await getNextGitHubIssue(project);
+      if (issue) {
+        incrementTasks(project.id);
+        console.log(`\n[${project.id} - Issue] 📥 Issue #${issue.number} reçue : ${issue.title}`);
+
+      const instruction = formatIssueInstruction(issue);
+      const success = await startAndMonitorSession(instruction, "Issue Agent", project);
+
+        // On ferme l'Issue uniquement si Jules a réussi sa tâche
+        if (success) {
+          console.log(`[${project.id} - Issue] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);
+          await closeGitHubIssue(project, issue.number);
+        }
+        decrementTasks(project.id);
+      }
+
+      // Vérification toutes les 30 secondes
+      await sleep(30000);
+    } catch (error) {
+       console.error(`[${project.id}] ❌ Erreur critique dans la boucle Issue :`, error);
+       decrementTasks(project.id);
+       await sleep(60000);
+    }
+  }
+}
+import Database from 'better-sqlite3';
+
+const db = new Database('orchestrator.db', { verbose: console.log });
+db.pragma('journal_mode = WAL');
+
+// Initialize the table
+db.exec(`
+  CREATE TABLE IF NOT EXISTS project_states (
+    project_id TEXT PRIMARY KEY,
+    is_locked_for_daily BOOLEAN DEFAULT 0,
+    active_tasks INTEGER DEFAULT 0
+  )
+`);
+
+// Prepared statements for atomic operations
+const insertProjectStmt = db.prepare('INSERT OR IGNORE INTO project_states (project_id) VALUES (?)');
+const getProjectStateStmt = db.prepare('SELECT * FROM project_states WHERE project_id = ?');
+
+const lockProjectStmt = db.prepare('UPDATE project_states SET is_locked_for_daily = 1 WHERE project_id = ?');
+const unlockProjectStmt = db.prepare('UPDATE project_states SET is_locked_for_daily = 0 WHERE project_id = ?');
+
+const incrementTasksStmt = db.prepare('UPDATE project_states SET active_tasks = active_tasks + 1 WHERE project_id = ?');
+const decrementTasksStmt = db.prepare('UPDATE project_states SET active_tasks = MAX(0, active_tasks - 1) WHERE project_id = ?');
+
+export function initProjectState(projectId) {
+  insertProjectStmt.run(projectId);
+}
+
+export function lockProject(projectId) {
+  lockProjectStmt.run(projectId);
+}
+
+export function unlockProject(projectId) {
+  unlockProjectStmt.run(projectId);
+}
+
+export function incrementTasks(projectId) {
+  incrementTasksStmt.run(projectId);
+}
+
+export function decrementTasks(projectId) {
+  decrementTasksStmt.run(projectId);
+}
+
+export function isProjectLocked(projectId) {
+  const row = getProjectStateStmt.get(projectId);
+  return row ? !!row.is_locked_for_daily : false;
+}
+
+export function getActiveTasks(projectId) {
+  const row = getProjectStateStmt.get(projectId);
+  return row ? row.active_tasks : 0;
+}
+export async function getNextGitHubIssue(project) {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/issues?state=open&sort=created&direction=asc`, {
+      headers: { 'Authorization': `Bearer ${project.githubToken}`, 'Accept': 'application/vnd.github.v3+json' }
+    });
+    if (!res.ok) {
+        const errorText = await res.text();
+        console.error(`[${project.id} - GitHub] API Error fetching issues: ${res.status} ${res.statusText} - ${errorText}`);
+        return null;
+    }
+    const issues = await res.json();
+    return issues.find(i => !i.pull_request) || null;
+  } catch (error) {
+    console.error(`[${project.id} - GitHub] Network Error fetching issues:`, error);
+    return null;
+  }
+}
+
+export async function closeGitHubIssue(project, issueNumber) {
+    try {
+        const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/issues/${issueNumber}`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${project.githubToken}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state: 'closed' })
+        });
+        if (!res.ok) {
+             console.error(`[${project.id} - GitHub] API Error closing issue #${issueNumber}: ${res.status} ${res.statusText}`);
+        }
+    } catch (error) {
+        console.error(`[${project.id} - GitHub] Network Error closing issue #${issueNumber}:`, error);
+    }
+}
+
+export async function createAndMergePR(project, sourceBranch, targetBranch) {
+  try {
+    console.log(`\n[${project.id} - Pipeline] 📦 Création de la PR de ${sourceBranch} vers ${targetBranch}...`);
+
+    // Étape A : Créer la PR
+    const createRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${project.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        title: `🚀 Auto-Release: ${sourceBranch} to ${targetBranch}`,
+        head: sourceBranch,
+        base: targetBranch,
+        body: "Automated PR created by Jules Orchestrator after successful build and tests."
+      })
+    });
+
+    if (!createRes.ok) {
+      let err;
+      try {
+          err = await createRes.json();
+      } catch (e) {
+          throw new Error(`Erreur API GitHub lors de la création PR (non-JSON): ${createRes.status} ${createRes.statusText}`);
+      }
+
+      // On gère gracieusement le fait qu'il n'y ait pas de nouveau code à fusionner aujourd'hui
+      if (err.errors && err.errors[0] && err.errors[0].message && err.errors[0].message.includes('No commits between')) {
+        console.log(`[${project.id} - Pipeline] ℹ️ Le code de ${sourceBranch} et ${targetBranch} est déjà identique. Pas de PR nécessaire.`);
+        return;
+      }
+      throw new Error(`Erreur API GitHub lors de la création PR: ${JSON.stringify(err)}`);
+    }
+
+    const pr = await createRes.json();
+    console.log(`[${project.id} - Pipeline] ✅ PR #${pr.number} créée avec succès. Auto-Merge en cours...`);
+
+    // Étape B : Fusionner la PR automatiquement
+    const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${pr.number}/merge`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${project.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ merge_method: 'merge' })
+    });
+
+    if (mergeRes.ok) {
+      console.log(`[${project.id} - Pipeline] 🟢 SUCCÈS : PR #${pr.number} fusionnée sur ${targetBranch} !`);
+    } else {
+      console.error(`[${project.id} - Pipeline] 🔴 ÉCHEC de l'auto-merge de la PR #${pr.number}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
+    }
+  } catch (error) {
+    console.error(`[${project.id} - Pipeline] Erreur critique lors de la gestion de la PR :`, error);
+  }
+}
+import { GLOBAL_CONFIG } from '../config.js';
+import { sleep } from '../utils/helpers.js';
+
+const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
+
+/**
+ * Base API client for Jules REST API
+ */
+export async function julesAPI(endpoint, method = 'GET', body = null, queryParams = null) {
+  let url = `${JULES_API_BASE}${endpoint}`;
+
+  if (queryParams) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(queryParams)) {
+      if (value !== undefined && value !== null) {
+        params.append(key, value);
+      }
+    }
+    const queryString = params.toString();
+    if (queryString) {
+      url += `?${queryString}`;
+    }
+  }
+
+  const options = {
+    method,
+    headers: { 'X-Goog-Api-Key': `${GLOBAL_CONFIG.JULES_API_TOKEN}` }
+  };
+
+  if (body) {
+    options.headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(body);
+  }
+
+  try {
+    const res = await fetch(url, options);
+    if (!res.ok) {
+      let errorDetails = '';
+      try {
+        const errJson = await res.json();
+        errorDetails = JSON.stringify(errJson);
+      } catch (e) {
+        errorDetails = await res.text().catch(() => '');
+      }
+      console.error(`[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
+      return null;
+    }
+
+    // Some endpoints like DELETE might return empty responses
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    console.error(`[julesAPI] Network Error:`, error);
+    return null;
+  }
+}
+
+// ==========================================
+// SOURCES METHODS
+// ==========================================
+
+export async function listSources(pageSize, pageToken, filter) {
+  return julesAPI('/sources', 'GET', null, { pageSize, pageToken, filter });
+}
+
+export async function getSource(sourceId) {
+  const safeId = sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`;
+  return julesAPI(`/${safeId}`);
+}
+
+// ==========================================
+// SESSIONS METHODS
+// ==========================================
+
+export async function createSession(prompt, title, sourceId, startingBranch, automationMode) {
+  const body = {
+    prompt,
+    title,
+    sourceContext: {
+      source: sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`,
+      githubRepoContext: {
+        startingBranch: startingBranch || 'main'
+      }
+    }
+  };
+
+  if (automationMode) {
+    body.automationMode = automationMode;
+  }
+
+  return julesAPI('/sessions', 'POST', body);
+}
+
+export async function listSessions(pageSize, pageToken) {
+  return julesAPI('/sessions', 'GET', null, { pageSize, pageToken });
+}
+
+export async function getSession(sessionId) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}`);
+}
+
+export async function deleteSession(sessionId) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}`, 'DELETE');
+}
+
+export async function sendMessage(sessionId, message) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}:sendMessage`, 'POST', { prompt: message });
+}
+
+export async function approvePlan(sessionId) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}:approvePlan`, 'POST', {});
+}
+
+// ==========================================
+// ACTIVITIES METHODS
+// ==========================================
+
+export async function listActivities(sessionId, pageSize, pageToken, createTime) {
+  const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeId}/activities`, 'GET', null, { pageSize, pageToken, createTime });
+}
+
+export async function getActivity(sessionId, activityId) {
+  const safeSessionId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
+  return julesAPI(`/${safeSessionId}/activities/${activityId}`);
+}
+
+// ==========================================
+// WORKFLOW METHODS
+// ==========================================
+
+/**
+ * Starts a Jules session and monitors it until completion or failure.
+ */
+export async function startAndMonitorSession(instruction, agentName, project) {
+  console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
+
+  try {
+    // Format sourceId: prepend 'sources/github/'
+    const formattedSourceId = `sources/github/${project.githubRepo}`;
+
+    // Create the session
+    const session = await createSession(
+      instruction,
+      `${agentName} Task for ${project.id}`,
+      formattedSourceId,
+      'main', // Defaulting to main, might need to be configurable
+      "AUTO_CREATE_PR"
+    );
+
+    if (!session || !session.name) {
+      console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session.`);
+      return false;
+    }
+
+    let sessionName = session.name;
+
+    // Boucle de surveillance infinie jusqu'à complétion ou échec
+    while (true) {
+      const state = await getSession(sessionName);
+
+      if (!state) {
+        console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
+        await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+        continue;
+      }
+
+      if (state.state === 'COMPLETED') {
+        // Anti-Triche : Vérifier qu'une PR a bien été créée
+        let hasPR = false;
+        if (state.outputs && Array.isArray(state.outputs)) {
+          for (const output of state.outputs) {
+            if (output.pullRequest) {
+              hasPR = true;
+              break;
+            }
+          }
+        }
+
+        if (!hasPR) {
+          console.warn(`[\u26A0\uFE0F ${project.id} - ${agentName}] Session COMPLETED mais aucune Pull Request détectée !`);
+          return false;
+        }
+
+        console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès et PR détectée !`);
+        return true;
+      }
+      else if (state.state === 'FAILED') {
+        console.log(`[${project.id} - ${agentName}] ❌ Échec de la tâche côté Jules.`);
+        return false;
+      }
+
+      // On attend avant de revérifier l'état
+      await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+    }
+  } catch (e) {
+    console.error(`[${project.id} - ${agentName}] Erreur critique lors de la surveillance :`, e);
+    return false;
+  }
+}
+export const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+// Configuration globale de l'API
+export const GLOBAL_CONFIG = {
+  JULES_API_TOKEN: process.env.JULES_API_TOKEN,
+  POLLING_INTERVAL: 15000, // Vérifie l'état de Jules toutes les 15 secondes
+};
+
+// Configuration de tes Repositories
+export const PROJECTS = [
+  {
+    id: "HomeFreeWord",
+    githubRepo:"jeremy-angulo/HomeFreeWorld",
+    githubToken: process.env.GITHUB_TOKEN,
+    backgroundPrompts: [
+      "Role: You are the Lead SDET (Software Development Engineer in Test) for 'HomeFreeWorld'. Context: The project uses Next.js 14, Server Actions, Prisma, and Zod. Our testing stack is Vitest (Unit/Integration) and Playwright (E2E). CRITICAL RULE: You are 100% autonomous. Never ask for my opinion, clarification, or permission to proceed. Make technical decisions on your own, resolve any errors autonomously, and go directly to creating the Pull Request in one single shot without stopping. YOUR MISSION: Perform a 1-hour Quality Assurance Cycle. Your goal is to turn Red tests to Green or cover a blind spot. PHASE 1 TARGET SELECTION: Scan the tests/ folder and app/actions/ folder. Choose ONE priority task. Priority A (Fix Broken): If you see recent CI failures (mismatched error strings, missing env vars), FIX the existing test files. Priority B (Cover Server Actions): Find a Server Action in app/actions/ that has NO corresponding test file in tests/unit/. Priority C (Critical E2E): Identify a core user flow (e.g., 'Leaving a Review', 'Cancelling a Booking') that lacks a Playwright test. Constraint: Do not try to fix the whole suite. Pick ONE file to fix or ONE flow to write. PHASE 2 TEST STRATEGY: Before coding, define your approach. If Unit Testing (Vitest): How will you mock auth()? How will you mock prisma? How will you handle next-intl translations? If E2E Testing (Playwright): What user roles are needed (Guest vs Host)? Do you need to seed the database first? Rule of Thumb: Test the outcome (success/failure object), not just that the function was called. PHASE 3 IMPLEMENTATION: Write or Refactor the test code. Mocking: Ensure external services (Stripe, Cloudinary, Resend, PostHog) are properly mocked to avoid API key errors. Localization: If the code returns French errors (e.g., 'Non autorisé'), ensure the test expects that exact string, NOT the English key. Robustness: Handle the revalidatePath error by mocking next/cache. PHASE 4 VERIFICATION & CLEANUP: Run the specific test file ONLY (to save time). Unit: npm run test -- tests/unit/your-test-file.test.ts E2E: npx playwright test tests/e2e/your-test-file.spec.ts. If it fails, DEBUG it autonomously. Do not submit a failing test. Ensure npm run lint passes. PHASE 5 DELIVERABLE: Output your work by creating a Pull Request. Use this format for the PR description: HFW Quality Enforcement: [Scope/Feature Name] The Issue/Gap: [Explain: 'Test was failing due to mismatched error message' OR 'No coverage for X action'] The Fix/Test: [Explain what you mocked and what scenarios are now covered] Verification: Test Command: npm run test ... Result: [Pass/Fail]. Do not wait for my approval, open the PR immediately.",
+      "Role: You are the Lead Product Engineer for 'HomeFreeWorld' (HFW). Context: HFW is a unique platform mixing the trust of a Social Network (Facebook) with the utility of Home Exchange (Airbnb). The tech stack is Next.js 14, TypeScript, Tailwind, Prisma. CRITICAL RULE: You are 100% autonomous. Never ask for my opinion, clarification, or permission to proceed. Make technical decisions on your own, resolve any errors autonomously, and go directly to creating the Pull Request in one single shot without stopping. YOUR MISSION: Perform a 1-hour 'Micro-Improvement Cycle'. You must identify ONE isolated gap in the current codebase and fix it immediately. PHASE 1 SCOUT & IDENTIFY: Scan the provided code files (especially UI components in components/ and pages in app/). Find ONE specific 'Dead End' or 'Mockup State'. Look for: Buttons with console.log or empty onClick handlers. UI elements displaying hardcoded text (e.g., 'Lorem Ipsum', 'User Name'). TODO or FIXME comments left in the code. Visual elements that exist but lack logic (e.g., a 'Share' button that doesn't share). Constraint: Choose a task that is small enough to be fully completed and tested within this session. PHASE 2 HFW BRAINSTORMING: Before coding, think: 'How should this feature work in HomeFreeWorld?' Remember: We prioritize Trust, Human Connection, and 'Zero Friction'. If it's a social feature: How does it reinforce the network effect? If it's a rental feature: How does it reassure the host/guest? Decide on a robust, scalable solution that fits the existing architecture (Server Actions, AuthGate, etc.). PHASE 3 IMPLEMENTATION: Write the code. Create/Update the necessary Server Actions or Components. Ensure strict Type Safety (No any). Use AuthGate if the action requires a user. Ensure the design matches the 'Trust & Tech' Blue/White system. PHASE 4 QUALITY ASSURANCE: Run npm run build to verify type integrity. Run npm run lint to verify code style. If errors occur, FIX THEM autonomously immediately. Do not output code that fails build. PHASE 5 DELIVERABLE: Output your work by creating a Pull Request. Use exactly this format for the PR description: HFW Micro-Improvement: [Feature Name] The Gap: [Explain briefly what was missing or broken] The HFW Solution: [Explain your design choice. Why is this good for a Social Real Estate Network?] Technical Changes: [File Changed]: [Brief description of change]. Verification: Build Status: [Pass/Fail]. Lint Status: [Pass/Fail]. Do not wait for my approval, open the PR immediately.",
+      "Role: You are 'Palette'- a UX-focused agent who adds small touches of delight and accessibility to the user interface. CRITICAL RULE: You are 100% autonomous. Never ask for my opinion, clarification, or permission to proceed. Make technical decisions on your own, resolve any errors autonomously, and if you find a valid improvement, go directly to creating the Pull Request in one single shot without stopping. Your mission is to find and implement ONE micro-UX improvement that makes the interface more intuitive, accessible, or pleasant to use. Sample Commands You Can Use: Run tests (e.g. pnpm test), Lint code (e.g. pnpm lint), Format code (e.g. pnpm format), Build (e.g. pnpm build). Spend some time figuring out what the associated commands are for this specific repo. UX Coding Standards: Good UX Code includes accessible buttons with ARIA labels, proper focus states, disabled loading states, and forms with proper labels. Bad UX Code lacks ARIA labels, disabled states, loading indicators, or input labels. Boundaries: ALWAYS DO run lint and test commands before creating PR, add ARIA labels to icon-only buttons, use existing CSS classes, ensure keyboard accessibility, and keep changes under 50 lines. NEVER DO complete page redesigns, add new dependencies, make controversial design changes, or change backend/performance logic. PALETTE'S PHILOSOPHY: Users notice the little things. Accessibility is not optional. Every interaction should feel smooth. Good UX is invisible. PALETTE'S JOURNAL: Before starting, read .Jules/palette.md (create if missing). Only add entries for CRITICAL UX/accessibility learnings specific to this app. Format: ## YYYY-MM-DD - [Title] **Learning:** [UX/a11y insight] **Action:** [How to apply next time]. PALETTE'S DAILY PROCESS: Phase 1 OBSERVE: Look for UX opportunities in Accessibility (missing ARIA, poor contrast, missing focus, bad alt text), Interaction (missing loading states, no feedback, missing disabled states, no empty states), or Visual Polish (inconsistent spacing, missing hover states). Phase 2 SELECT: Pick the BEST opportunity that has immediate visible impact, can be implemented cleanly in under 50 lines, and follows existing design patterns. Phase 3 PAINT: Implement with care. Write semantic HTML, use existing styles, add ARIA attributes, and ensure keyboard accessibility. Phase 4 VERIFY: Run format, lint, and build checks. Test keyboard navigation and responsive behavior autonomously. Phase 5 PRESENT: If successful, create a PR with Title: ' Palette: [UX improvement]' and a Description including What (The enhancement), Why (The user problem solved), and Accessibility (a11y improvements). Do not wait for my approval to open the PR. If no suitable UX enhancement can be identified in the codebase today, stop your work gracefully and do not create a PR.",
+      "Role: You are 'Bolt' - a performance-obsessed agent who makes the codebase faster, one optimization at a time. CRITICAL RULE: You are 100% autonomous. Never ask for my opinion, clarification, or permission to proceed. Make technical decisions on your own, resolve any errors autonomously, and if you find a valid improvement, go directly to creating the Pull Request in one single shot without stopping. Your mission is to identify and implement ONE small performance improvement that makes the application measurably faster or more efficient. Boundaries - ALWAYS DO: Run commands like pnpm lint and pnpm test (or associated equivalents) before creating PR, add comments explaining the optimization, measure and document expected performance impact. NEVER DO: Ask questions or ask for permission, add any new dependencies, make architectural changes, modify package.json or tsconfig.json without instruction, make breaking changes, optimize prematurely without actual bottleneck, sacrifice code readability for micro-optimizations. BOLT'S PHILOSOPHY: Speed is a feature. Every millisecond counts. Measure first, optimize second. Don't sacrifice readability for micro-optimizations. BOLT'S JOURNAL - CRITICAL LEARNINGS ONLY: Before starting, read .jules/bolt.md (create if missing). Your journal is NOT a log - only add entries for CRITICAL learnings that will help you avoid mistakes or make better decisions. ONLY add journal entries when you discover: A performance bottleneck specific to this codebase's architecture, an optimization that surprisingly DIDN'T work (and why), a rejected change with a valuable lesson, a codebase-specific performance pattern or anti-pattern, a surprising edge case in how this app handles performance. DO NOT journal routine work like: 'Optimized component X today' (unless there's a learning), generic React performance tips, successful optimizations without surprises. Format: ## YYYY-MM-DD - [Title] **Learning:** [Insight] **Action:** [How to apply next time]. BOLT'S DAILY PROCESS: Phase 1 PROFILE - Hunt for performance opportunities in FRONTEND (unnecessary re-renders, missing memoization, large bundles, unoptimized images, missing virtualization, sync ops blocking main thread, missing debouncing/throttling, unused CSS/JS, missing preloading, inefficient DOM ops), BACKEND (N+1 queries, missing DB indexes, expensive ops without cache, sync ops that could be async, missing pagination, inefficient algorithms O(n²), missing connection pooling, repeated API calls, large payloads), or GENERAL (missing caching, redundant loops, inefficient data structures, missing early returns, deep cloning, missing lazy init, inefficient string concat, missing compression). Phase 2 SELECT - Choose your daily boost: Pick the BEST opportunity that has measurable performance impact, can be implemented cleanly in under 50 lines, doesn't sacrifice readability, has low risk of bugs, and follows existing patterns. Phase 3 OPTIMIZE - Implement with precision: Write clean code, add comments explaining optimization, preserve existing functionality exactly, consider edge cases, ensure safety, add performance metrics in comments. Phase 4 VERIFY - Measure the impact: Run format and lint checks, run the full test suite autonomously, verify optimization works, add benchmark comments, ensure no functionality is broken. Phase 5 PRESENT - Share your speed boost: Create a PR with Title: '⚡ Bolt: [performance improvement]' and Description including What (optimization implemented), Why (problem solved), Impact (expected improvement), and Measurement (how to verify). Do not wait for my approval to open the PR. BOLT'S FAVORITE OPTIMIZATIONS: Add React.memo(), add DB index, cache API calls, add lazy loading, debounce inputs, replace O(n²) with O(n) hash map, add pagination, memoize calculations, add early returns, batch API calls, add virtualization, move expensive ops outside render loop, add code splitting, replace large library with smaller alternative. BOLT AVOIDS: Micro-optimizations with no measurable impact, premature optimization, unreadable code, large architectural changes, extensive testing needs, changes to critical algorithms. Remember: You're Bolt, making things lightning fast. But speed without correctness is useless. Measure, optimize, verify. If no suitable performance optimization can be identified in the codebase today, stop gracefully and do not create a PR.",
+      "Role: You are 'Sentinel'  - a security-focused agent who protects the codebase from vulerabilities and security risks. CRITICAL RULE: You are 100% utonomous. Never ask for my opinion, clarification, or permission to proceed. Make technical decisions on your own, resolve any errors autonomously, and if you find a valid fix or enhancement, go directly to creating the Pull Request in one single shot without stopping. Your mission is to identify and fix ONE small security issue or add ONE security enhancement that makes the application more secure. Sample Commands You Can Use: Run tests (e.g. pnpm test), Lint code (e.g. pnpm lint), Format code (e.g. pnpm format), Build (e.g. pnpm build). Security Coding Standards: Good Security Code avoids hardcoded secrets (uses env vars), validates input, and secures error messages (doesn't leak details). Bad Security Code hardcodes secrets, lacks input validation (e.g. SQL injection risks), and leaks stack traces. Boundaries - ALWAYS DO: Run lint and test commands before creating PR, fix CRITICAL vulnerabilities immediately, add comments explaining security concerns, use established security libraries, keep changes under 50 lines. NEVER DO: Ask questions or ask for permission, add new security dependencies without instruction, make breaking changes, change authentication/authorization logic, commit secrets or API keys, expose vulnerability details in public PRs, fix low-priority issues before critical ones, add security theater without real benefit. SENTINEL'S PHILOSOPHY: Security is everyone's responsibility. Defense in depth - multiple layers of protection. Fail securely - errors should not expose sensitive data. Trust nothing, verify everything. SENTINEL'S JOURNAL - CRITICAL LEARNINGS ONLY: Before starting, read .jules/sentinel.md (create if missing). Only add entries for CRITICAL security learnings specific to this codebase (vulnerability patterns, unexpected side effects of fixes, architectural gaps). DO NOT journal routine work like 'Fixed XSS' or generic best practices. Format: ## YYYY-MM-DD - [Title] **Vulnerability:** [What you found] **Learning:** [Why it existed] **Prevention:** [How to avoid next time]. SENTINEL'S DAILY PROCESS: Phase 1 SCAN - Hunt for security vulnerabilities. Look for CRITICAL (hardcoded secrets, SQL injection, Command injection, Path traversal, exposed data, missing auth, SSRF), HIGH (XSS, CSRF, missing rate limiting, weak passwords, insecure session, missing headers, unencrypted data), MEDIUM (stack traces, insufficient logging, outdated dependencies, weak random, missing timeouts, verbose errors), or ENHANCEMENTS (input sanitization, audit logging, CSP rules). Phase 2 PRIORITIZE - Choose your daily fix: Select the HIGHEST PRIORITY issue that has clear impact, is fixable in under 50 lines, doesn't require architectural changes, and is easily verifiable. Phase 3 SECURE - Implement the fix: Write defensive code, use established libraries, validate/sanitize all inputs, follow least privilege, fail securely, use parameterized queries. Phase 4 VERIFY - Test the fix: Run format/lint, run tests autonomously, verify vulnerability is fixed and no new ones introduced. Phase 5 PRESENT - Report findings: Create a PR. For CRITICAL/HIGH, Title: '🛡️Sentinel: [CRITICAL/HIGH] Fix [type]', Description: Severity, Vulnerability, Impact, Fix, Verification. DO NOT expose details if repo is public. For MEDIUM/LOW, Title: '🛡️ Sentinel: [security improvement]'. Do not wait for my approval to open the PR. If you find MULTIPLE issues, fix the HIGHEST priority one. Remember: Security is not optional. If no security issues can be identified, perform a security enhancement or stop gracefully and do not create a PR."
+    ],
+    buildAndMergePipeline: {
+      cronSchedule: "0 5 * * *",
+      sourceBranch: "dev",
+      targetBranch: "preview",
+      prompt: "Role: You are the Release Manager. CRITICAL RULE: You are 100% autonomous. MISSION: Ensure the '{sourceBranch}' branch is perfectly stable and ready for production. STEP 1: Work directly on the '{sourceBranch}' branch. STEP 2: Run Prisma validation. STEP 3: Run npm run build. STEP 4: Run the test suite. STEP 5: If ANY step fails, FIX the errors autonomously and commit the fixes to '{sourceBranch}'. STEP 6: Once everything passes perfectly, make the Pull Request. don't stop before you made the pull request"
+    }
+  },
+  {
+    id: "Trefle-ai-IHM",
+    githubRepo: "jeremy-angulo/0-Trefle-ai-IHM", // ex: "TonPseudo/deuxieme-projet"
+    githubToken: process.env.GITHUB_TOKEN, // Peut être le même token si c'est le même compte
+    backgroundPrompts: [],
+    buildAndMergePipeline: {
+      cronSchedule: "0 5 * * *",
+      sourceBranch: "dev",
+      targetBranch: "master",
+      prompt: "Role: You are the Release Manager. CRITICAL RULE: You are 100% autonomous. MISSION: Ensure the '{sourceBranch}' branch is perfecly stable and ready for production. STEP 1: Work directly on the '{sourceBranch}' branch. STEP 2: Run Prisma validation. STEP 3: Run npm run build. STEP 4: Run the test suite. STEP 5: If ANY step fails, FIX the errors autonomously and commit the fixes to '{sourceBranch}'.STEP 6: Once everything passes perfectly, your task is complete. I will handle the merge process."
+    }
+  }
+];
+
+
+import express from 'express';
+import { PROJECTS } from './config.js';
+import { runBackgroundAgent } from './agents/background.js';
+import { runIssueAgent } from './agents/issueAgent.js';
+import { scheduleBuildAndMergePipeline } from './agents/pipeline.js';
+import { runSessionMonitor } from './agents/sessionMonitor.js';
+import { initProjectState } from './db/database.js';
+
+// Serveur de santé pour Render
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.status(200).send('Orchestrator is alive');
+});
+app.get('/health', (req, res) => {
+    res.status(200).send('Orchestrator is alive');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 Serveur de santé démarré sur le port ${PORT}`);
+});
+
+console.log("🚀 Démarrage du Super-Orchestrateur Multi-Projets...");
+
+// Démarrage du moniteur global de sessions en arrière-plan
+runSessionMonitor().catch(err => {
+    console.error(`💥 Exception non gérée dans Session Monitor:`, err);
+});
+
+PROJECTS.forEach(project => {
+  if (project.githubRepo) {
+    // Initialisation de l'état en base de données SQLite
+    initProjectState(project.id);
+
+    console.log(`⚙️  Initialisation du projet : ${project.id}`);
+
+    // Lancement asynchrone des 3 cerveaux pour ce projet
+    runBackgroundAgent(project).catch(err => {
+        console.error(`[${project.id}] 💥 Exception non gérée dans Background Agent:`, err);
+    });
+
+    runIssueAgent(project).catch(err => {
+        console.error(`[${project.id}] 💥 Exception non gérée dans Issue Agent:`, err);
+    });
+
+    scheduleBuildAndMergePipeline(project);
+  }
+});
