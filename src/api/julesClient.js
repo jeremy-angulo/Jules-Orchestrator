@@ -148,7 +148,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
       instruction,
       `${agentName} Task for ${project.id}`,
       formattedSourceId,
-      'main', // Defaulting to main, might need to be configurable
+      project.githubBranch || 'main', // Using configured branch or defaulting to main
       "AUTO_CREATE_PR"
     );
 
