@@ -90,3 +90,59 @@ export async function createAndMergePR(project, sourceBranch, targetBranch) {
     console.error(`[${project.id} - Pipeline] Erreur critique lors de la gestion de la PR :`, error);
   }
 }
+
+export async function checkAndMergePR(project, prNumber) {
+  try {
+    console.log(`\n[${project.id} - PR] 🔍 Vérification de la PR #${prNumber} après 3 minutes...`);
+
+    // 1. Récupérer les détails de la PR
+    const getRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}`, {
+      headers: {
+        'Authorization': `Bearer ${project.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+
+    if (!getRes.ok) {
+      console.error(`[${project.id} - PR] ❌ Erreur API GitHub lors de la récupération de la PR #${prNumber}: ${getRes.status} ${getRes.statusText}`);
+      return;
+    }
+
+    const pr = await getRes.json();
+
+    // 2. Vérifier si elle est déjà mergée
+    if (pr.merged) {
+      console.log(`[${project.id} - PR] ℹ️ La PR #${prNumber} est déjà mergée. Aucune action nécessaire.`);
+      return;
+    }
+
+    // 3. Vérifier le titre (pas de "bump")
+    if (pr.title.toLowerCase().includes('bump')) {
+      console.log(`[${project.id} - PR] ℹ️ La PR #${prNumber} contient "bump" dans le titre. Merge manuel requis.`);
+      return;
+    }
+
+    // 4. Si non mergée et pas de "bump", on merge
+    console.log(`[${project.id} - PR] ⚙️ Tentative d'auto-merge de la PR #${prNumber}...`);
+    const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/merge`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${project.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ merge_method: 'merge' })
+    });
+
+    if (mergeRes.ok) {
+      console.log(`[${project.id} - PR] 🟢 SUCCÈS : PR #${prNumber} fusionnée automatiquement !`);
+    } else {
+      console.error(`[${project.id} - PR] 🔴 ÉCHEC de l'auto-merge de la PR #${prNumber}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
+      const errText = await mergeRes.text();
+      console.error(`Détails: ${errText}`);
+    }
+
+  } catch (error) {
+    console.error(`[${project.id} - PR] Erreur critique lors de checkAndMergePR :`, error);
+  }
+}
