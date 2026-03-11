@@ -23,7 +23,7 @@ test('julesAPI - handles network errors', async () => {
 
 test('julesAPI - handles non-ok status', async () => {
   const originalFetch = global.fetch;
-  global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized' });
+  global.fetch = async () => ({ ok: false, status: 401, statusText: 'Unauthorized', text: async () => 'error text' });
 
   const result = await julesAPI('/test');
   assert.strictEqual(result, null);
@@ -33,7 +33,7 @@ test('julesAPI - handles non-ok status', async () => {
 
 test('startAndMonitorSession - fails if session creation fails', async () => {
     const originalFetch = global.fetch;
-    global.fetch = async () => ({ ok: false, status: 500, statusText: 'Server Error' });
+    global.fetch = async () => ({ ok: false, status: 500, statusText: 'Server Error', text: async () => 'error text' });
 
     const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
     assert.strictEqual(result, false);
@@ -48,18 +48,12 @@ test('startAndMonitorSession - completes successfully', async () => {
     global.fetch = async (url, options) => {
       callCount++;
       if (callCount === 1) { // Session creation
-        return { ok: true, json: async () => ({ name: 'sessions/123' }) };
+        return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
       }
-      if (callCount === 2) { // First poll -> WAITING_FOR_USER_INPUT
-        return { ok: true, json: async () => ({ state: 'AWAITING_USER_FEEDBACK' }) };
+      if (callCount === 2) { // First poll -> COMPLETED
+        return { ok: true, text: async () => JSON.stringify({ state: 'COMPLETED' }) };
       }
-      if (callCount === 3) { // Send message response
-         return { ok: true, json: async () => ({}) };
-      }
-      if (callCount === 4) { // Second poll -> COMPLETED
-        return { ok: true, json: async () => ({ state: 'COMPLETED' }) };
-      }
-      return { ok: false, status: 500, statusText: 'Unexpected call' };
+      return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
     };
 
     const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
@@ -75,12 +69,12 @@ test('startAndMonitorSession - fails when session status is FAILED', async () =>
   global.fetch = async (url, options) => {
     callCount++;
     if (callCount === 1) { // Session creation
-      return { ok: true, json: async () => ({ name: 'sessions/123' }) };
+      return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
     }
     if (callCount === 2) { // First poll -> FAILED
-      return { ok: true, json: async () => ({ state: 'FAILED' }) };
+      return { ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) };
     }
-    return { ok: false, status: 500, statusText: 'Unexpected call' };
+    return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
   };
 
   const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
@@ -96,15 +90,15 @@ test('startAndMonitorSession - handles missing state (null) robustly', async () 
   global.fetch = async (url, options) => {
     callCount++;
     if (callCount === 1) { // Session creation
-      return { ok: true, json: async () => ({ name: 'sessions/123' }) };
+      return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
     }
     if (callCount === 2) { // First poll -> API returns 500 Error, so julesAPI returns null
-      return { ok: false, status: 500, statusText: 'Server Error' };
+      return { ok: false, status: 500, statusText: 'Server Error', text: async () => 'error text' };
     }
     if (callCount === 3) { // Second poll -> API recovers, status FAILED (to end test)
-      return { ok: true, json: async () => ({ state: 'FAILED' }) };
+      return { ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) };
     }
-    return { ok: false, status: 500, statusText: 'Unexpected call' };
+    return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
   };
 
   const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
