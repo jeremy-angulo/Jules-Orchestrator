@@ -28,7 +28,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
 
   try {
-    const session = await julesAPI('/sessions', 'POST', { instruction: contextualizedInstruction });
+    const session = await julesAPI('/sessions', 'POST', { prompt: contextualizedInstruction });
     if (!session || !session.name) {
       console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session.`);
       return false;
