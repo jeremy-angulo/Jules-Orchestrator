@@ -38,6 +38,8 @@ test('startAndMonitorSession - completes successfully and verifies PR', async (t
     t.mock.method(globalThis, 'fetch', async (url, options) => {
       callCount++;
       if (callCount === 1) { // Session creation
+        const body = JSON.parse(options.body);
+        assert.strictEqual(body.sourceContext.source, 'sources/github/test/repo', 'Source ID should match API format with slashes');
         return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
       }
       if (callCount === 2) { // First poll -> COMPLETED
