@@ -51,13 +51,13 @@ test('startAndMonitorSession - completes successfully', async () => {
         return { ok: true, json: async () => ({ name: 'sessions/123' }) };
       }
       if (callCount === 2) { // First poll -> WAITING_FOR_USER_INPUT
-        return { ok: true, json: async () => ({ status: 'WAITING_FOR_USER_INPUT' }) };
+        return { ok: true, json: async () => ({ state: 'AWAITING_USER_FEEDBACK' }) };
       }
       if (callCount === 3) { // Send message response
          return { ok: true, json: async () => ({}) };
       }
       if (callCount === 4) { // Second poll -> COMPLETED
-        return { ok: true, json: async () => ({ status: 'COMPLETED' }) };
+        return { ok: true, json: async () => ({ state: 'COMPLETED' }) };
       }
       return { ok: false, status: 500, statusText: 'Unexpected call' };
     };
@@ -78,7 +78,7 @@ test('startAndMonitorSession - fails when session status is FAILED', async () =>
       return { ok: true, json: async () => ({ name: 'sessions/123' }) };
     }
     if (callCount === 2) { // First poll -> FAILED
-      return { ok: true, json: async () => ({ status: 'FAILED' }) };
+      return { ok: true, json: async () => ({ state: 'FAILED' }) };
     }
     return { ok: false, status: 500, statusText: 'Unexpected call' };
   };
@@ -102,7 +102,7 @@ test('startAndMonitorSession - handles missing state (null) robustly', async () 
       return { ok: false, status: 500, statusText: 'Server Error' };
     }
     if (callCount === 3) { // Second poll -> API recovers, status FAILED (to end test)
-      return { ok: true, json: async () => ({ status: 'FAILED' }) };
+      return { ok: true, json: async () => ({ state: 'FAILED' }) };
     }
     return { ok: false, status: 500, statusText: 'Unexpected call' };
   };
