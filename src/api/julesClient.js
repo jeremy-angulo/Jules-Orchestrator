@@ -6,7 +6,7 @@ const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 export async function julesAPI(endpoint, method = 'GET', body = null) {
   const options = {
     method,
-    headers: { 'Authorization': `Bearer ${GLOBAL_CONFIG.JULES_API_TOKEN}`, 'Content-Type': 'application/json' }
+    headers: { 'X-Goog-Api-Key': `${GLOBAL_CONFIG.JULES_API_TOKEN}`, 'Content-Type': 'application/json' }
   };
   if (body) options.body = JSON.stringify(body);
   try {
