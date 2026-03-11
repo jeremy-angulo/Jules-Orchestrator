@@ -69,3 +69,84 @@ test('createAndMergePR - handles non-JSON errors gracefully', async () => {
 
   global.fetch = originalFetch;
 });
+
+test('createAndMergePR - success (happy path)', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url.endsWith('/pulls')) {
+      return {
+        ok: true,
+        json: async () => ({ number: 123 })
+      };
+    } else if (url.endsWith('/pulls/123/merge')) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: 'OK'
+      };
+    }
+    throw new Error('Unexpected URL: ' + url);
+  });
+
+  await createAndMergePR(mockProject, 'dev', 'main');
+  assert.strictEqual(fetchMock.mock.calls.length, 2);
+});
+
+test('createAndMergePR - handles "No commits between" gracefully', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url.endsWith('/pulls')) {
+      return {
+        ok: false,
+        status: 422,
+        statusText: 'Unprocessable Entity',
+        json: async () => ({
+          errors: [{ message: 'No commits between dev and main' }]
+        })
+      };
+    }
+    throw new Error('Unexpected URL: ' + url);
+  });
+
+  await createAndMergePR(mockProject, 'dev', 'main');
+  assert.strictEqual(fetchMock.mock.calls.length, 1);
+});
+
+test('createAndMergePR - handles PR creation JSON error', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url.endsWith('/pulls')) {
+      return {
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: async () => ({
+          message: 'Validation Failed',
+          errors: [{ message: 'Some other error' }]
+        })
+      };
+    }
+    throw new Error('Unexpected URL: ' + url);
+  });
+
+  await createAndMergePR(mockProject, 'dev', 'main');
+  assert.strictEqual(fetchMock.mock.calls.length, 1);
+});
+
+test('createAndMergePR - handles auto-merge failure gracefully', async (t) => {
+  const fetchMock = t.mock.method(globalThis, 'fetch', async (url) => {
+    if (url.endsWith('/pulls')) {
+      return {
+        ok: true,
+        json: async () => ({ number: 456 })
+      };
+    } else if (url.endsWith('/pulls/456/merge')) {
+      return {
+        ok: false,
+        status: 405,
+        statusText: 'Method Not Allowed'
+      };
+    }
+    throw new Error('Unexpected URL: ' + url);
+  });
+
+  await createAndMergePR(mockProject, 'dev', 'main');
+  assert.strictEqual(fetchMock.mock.calls.length, 2);
+});
