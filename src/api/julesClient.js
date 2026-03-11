@@ -140,8 +140,8 @@ export async function startAndMonitorSession(instruction, agentName, project) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
 
   try {
-    // Format sourceId: replace '/' with '-' and prepend 'github-'
-    const formattedSourceId = `sources/github-${project.githubRepo.replace('/', '-')}`;
+    // Format sourceId: prepend 'sources/github/'
+    const formattedSourceId = `sources/github/${project.githubRepo}`;
 
     // Create the session
     const session = await createSession(
