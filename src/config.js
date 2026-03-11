@@ -21,7 +21,7 @@ export const PROJECTS = [
       cronSchedule: "0 5 * * *",
       sourceBranch: "dev",
       targetBranch: "preview",
-      prompt: "Role: You are the Release Manager. CRITICAL RULE: You are 100% autonomous. MISSION: Ensure the '{sourceBranch}' branch is perfectly stable and ready for production. STEP 1: Work directly on the '{sourceBranch}' branch. STEP 2: Run Prisma validation. STEP 3: Run npm run build. STEP 4: Run the test suite. STEP 5: If ANY step fails, FIX the errors autonomously and commit the fixes to '{sourceBranch}'. STEP 6: Once everything passes perfectly, your task is complete. I will handle the merge process."
+      prompt: "Role: You are the Release Manager. CRITICAL RULE: You are 100% autonomous. MISSION: Ensure the '{sourceBranch}' branch is perfectly stable and ready for production. STEP 1: Work directly on the '{sourceBranch}' branch. STEP 2: Run Prisma validation. STEP 3: Run npm run build. STEP 4: Run the test suite. STEP 5: If ANY step fails, FIX the errors autonomously and commit the fixes to '{sourceBranch}'. STEP 6: Once everything passes perfectly, make the Pull Request. don't stop before you made the pull request"
     }
   },
   {
