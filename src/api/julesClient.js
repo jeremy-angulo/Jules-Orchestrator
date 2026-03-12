@@ -1,5 +1,6 @@
 import { GLOBAL_CONFIG } from '../config.js';
 import { sleep } from '../utils/helpers.js';
+import { checkAndMergePR } from './githubClient.js';
 
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 
@@ -172,13 +173,24 @@ export async function startAndMonitorSession(instruction, agentName, project) {
       if (state.state === 'COMPLETED') {
         // Anti-Triche : Vérifier qu'une PR a bien été créée
         let hasPR = false;
+        let prUrl = null;
         if (state.outputs && Array.isArray(state.outputs)) {
           for (const output of state.outputs) {
             if (output.pullRequest) {
               hasPR = true;
+              prUrl = output.pullRequest.url;
               break;
             }
           }
+        }
+
+        if (prUrl) {
+            const match = prUrl.match(/\/pull\/(\d+)$/);
+            if (match) {
+                const prNumber = match[1];
+                // Planifier la vérification et le merge après 3 minutes
+                setTimeout(() => checkAndMergePR(project, prNumber), 180000);
+            }
         }
 
         if (!hasPR) {
