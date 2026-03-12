@@ -12,7 +12,7 @@ export async function runSessionMonitor() {
 
       // 1. Fetch all sessions with pagination
       do {
-        const sessionsResponse = await listSessions(100, pageToken);
+        const sessionsResponse = await listSessions('Session Monitor', 100, pageToken);
 
         if (!sessionsResponse || !sessionsResponse.sessions) {
            console.error("[SessionMonitor] ⚠️ Impossible de récupérer la liste des sessions. Réessai dans quelques secondes...");
@@ -35,10 +35,10 @@ export async function runSessionMonitor() {
       for (const session of activeSessions) {
         if (session.state === 'AWAITING_PLAN_APPROVAL') {
            console.log(`[SessionMonitor] ⏳ Session ${session.id} en attente d'approbation du plan. Validation automatique...`);
-           await approvePlan(session.name);
+           await approvePlan('Session Monitor', session.name);
         } else if (session.state === 'AWAITING_USER_FEEDBACK') {
            console.log(`[SessionMonitor] 💬 Session ${session.id} bloquée en attente d'un retour. Injection de "keep going"...`);
-           await sendMessage(session.name, "keep going");
+           await sendMessage('Session Monitor', session.name, "keep going");
         }
       }
 

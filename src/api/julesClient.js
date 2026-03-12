@@ -1,13 +1,15 @@
 import { GLOBAL_CONFIG } from '../config.js';
 import { sleep } from '../utils/helpers.js';
 import { checkAndMergePR } from './githubClient.js';
+import { getAvailableToken, QuotaExceededError } from './tokenRotation.js';
+import { incrementTokenUsage } from '../db/database.js';
 
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 
 /**
  * Base API client for Jules REST API
  */
-export async function julesAPI(endpoint, method = 'GET', body = null, queryParams = null) {
+export async function julesAPI(agentName, endpoint, method = 'GET', body = null, queryParams = null) {
   let url = `${JULES_API_BASE}${endpoint}`;
 
   if (queryParams) {
@@ -23,9 +25,17 @@ export async function julesAPI(endpoint, method = 'GET', body = null, queryParam
     }
   }
 
+  // Use dynamic token logic via tokenRotation.js
+  const token = getAvailableToken(agentName);
+
+  // Track usage for sessions creation / messages
+  if (method === 'POST' && (endpoint === '/sessions' || endpoint.includes(':sendMessage'))) {
+    incrementTokenUsage(token, agentName);
+  }
+
   const options = {
     method,
-    headers: { 'X-Goog-Api-Key': `${GLOBAL_CONFIG.JULES_API_TOKEN}` }
+    headers: { 'X-Goog-Api-Key': token }
   };
 
   if (body) {
@@ -60,20 +70,20 @@ export async function julesAPI(endpoint, method = 'GET', body = null, queryParam
 // SOURCES METHODS
 // ==========================================
 
-export async function listSources(pageSize, pageToken, filter) {
-  return julesAPI('/sources', 'GET', null, { pageSize, pageToken, filter });
+export async function listSources(agentName, pageSize, pageToken, filter) {
+  return julesAPI(agentName, '//sources', 'GET', null, { pageSize, pageToken, filter });
 }
 
-export async function getSource(sourceId) {
+export async function getSource(agentName, sourceId) {
   const safeId = sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`;
-  return julesAPI(`/${safeId}`);
+  return julesAPI(agentName, `/${safeId}`);
 }
 
 // ==========================================
 // SESSIONS METHODS
 // ==========================================
 
-export async function createSession(prompt, title, sourceId, startingBranch, automationMode) {
+export async function createSession(agentName, prompt, title, sourceId, startingBranch, automationMode) {
   const body = {
     prompt,
     title,
@@ -89,45 +99,45 @@ export async function createSession(prompt, title, sourceId, startingBranch, aut
     body.automationMode = automationMode;
   }
 
-  return julesAPI('/sessions', 'POST', body);
+  return julesAPI(agentName, '/sessions', 'POST', body);
 }
 
-export async function listSessions(pageSize, pageToken) {
-  return julesAPI('/sessions', 'GET', null, { pageSize, pageToken });
+export async function listSessions(agentName, pageSize, pageToken) {
+  return julesAPI(agentName, '//sessions', 'GET', null, { pageSize, pageToken });
 }
 
-export async function getSession(sessionId) {
+export async function getSession(agentName, sessionId) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(`/${safeId}`);
+  return julesAPI(agentName, `/${safeId}`);
 }
 
-export async function deleteSession(sessionId) {
+export async function deleteSession(agentName, sessionId) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(`/${safeId}`, 'DELETE');
+  return julesAPI(agentName, `/${safeId}`, 'DELETE');
 }
 
-export async function sendMessage(sessionId, message) {
+export async function sendMessage(agentName, sessionId, message) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(`/${safeId}:sendMessage`, 'POST', { prompt: message });
+  return julesAPI(agentName, `/${safeId}:sendMessage`, 'POST', { prompt: message });
 }
 
-export async function approvePlan(sessionId) {
+export async function approvePlan(agentName, sessionId) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(`/${safeId}:approvePlan`, 'POST', {});
+  return julesAPI(agentName, `/${safeId}:approvePlan`, 'POST', {});
 }
 
 // ==========================================
 // ACTIVITIES METHODS
 // ==========================================
 
-export async function listActivities(sessionId, pageSize, pageToken, createTime) {
+export async function listActivities(agentName, sessionId, pageSize, pageToken, createTime) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(`/${safeId}/activities`, 'GET', null, { pageSize, pageToken, createTime });
+  return julesAPI(agentName, `/${safeId}/activities`, 'GET', null, { pageSize, pageToken, createTime });
 }
 
-export async function getActivity(sessionId, activityId) {
+export async function getActivity(agentName, sessionId, activityId) {
   const safeSessionId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(`/${safeSessionId}/activities/${activityId}`);
+  return julesAPI(agentName, `/${safeSessionId}/activities/${activityId}`);
 }
 
 // ==========================================
@@ -146,6 +156,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
 
     // Create the session
     const session = await createSession(
+      agentName,
       instruction,
       `${agentName} Task for ${project.id}`,
       formattedSourceId,
@@ -162,7 +173,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
 
     // Boucle de surveillance infinie jusqu'à complétion ou échec
     while (true) {
-      const state = await getSession(sessionName);
+      const state = await getSession(agentName, sessionName);
 
       if (!state) {
         console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
