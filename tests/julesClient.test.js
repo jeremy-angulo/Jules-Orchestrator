@@ -110,3 +110,43 @@ test('startAndMonitorSession - handles missing state (null) robustly', async (t)
   const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
   assert.strictEqual(result, false);
 });
+
+test('startAndMonitorSession - handles AWAITING_PLAN_APPROVAL and AWAITING_USER_FEEDBACK', async (t) => {
+  let callCount = 0;
+  let receivedPlanApproval = false;
+  let receivedMessage = false;
+
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    callCount++;
+    if (callCount === 1) { // Session creation
+      return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
+    }
+    if (callCount === 2) { // Poll 1 -> AWAITING_PLAN_APPROVAL
+      return { ok: true, text: async () => JSON.stringify({ state: 'AWAITING_PLAN_APPROVAL' }) };
+    }
+    if (callCount === 3) { // approvePlan POST
+      receivedPlanApproval = true;
+      assert.strictEqual(url.includes(':approvePlan'), true);
+      return { ok: true, text: async () => JSON.stringify({}) };
+    }
+    if (callCount === 4) { // Poll 2 -> AWAITING_USER_FEEDBACK
+      return { ok: true, text: async () => JSON.stringify({ state: 'AWAITING_USER_FEEDBACK' }) };
+    }
+    if (callCount === 5) { // sendMessage POST
+      receivedMessage = true;
+      assert.strictEqual(url.includes(':sendMessage'), true);
+      const body = JSON.parse(options.body);
+      assert.strictEqual(body.prompt, 'keep going');
+      return { ok: true, text: async () => JSON.stringify({}) };
+    }
+    if (callCount === 6) { // Poll 3 -> FAILED (to end test)
+      return { ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) };
+    }
+    return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
+  });
+
+  const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
+  assert.strictEqual(result, false);
+  assert.strictEqual(receivedPlanApproval, true);
+  assert.strictEqual(receivedMessage, true);
+});
