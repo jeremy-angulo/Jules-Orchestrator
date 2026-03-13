@@ -3,7 +3,6 @@ import { PROJECTS } from './config.js';
 import { runBackgroundAgent } from './agents/background.js';
 import { runIssueAgent } from './agents/issueAgent.js';
 import { scheduleBuildAndMergePipeline } from './agents/pipeline.js';
-import { runSessionMonitor } from './agents/sessionMonitor.js';
 import { initProjectState } from './db/database.js';
 
 // Serveur de santé pour Render
@@ -22,11 +21,6 @@ app.listen(PORT, () => {
 });
 
 console.log("🚀 Démarrage du Super-Orchestrateur Multi-Projets...");
-
-// Démarrage du moniteur global de sessions en arrière-plan
-runSessionMonitor().catch(err => {
-    console.error(`💥 Exception non gérée dans Session Monitor:`, err);
-});
 
 PROJECTS.forEach(project => {
   if (project.githubRepo) {
