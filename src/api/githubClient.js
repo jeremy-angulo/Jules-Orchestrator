@@ -146,3 +146,54 @@ export async function checkAndMergePR(project, prNumber) {
     console.error(`[${project.id} - PR] Erreur critique lors de checkAndMergePR :`, error);
   }
 }
+
+export async function mergeOpenPRs(project) {
+  try {
+    console.log(`\n[${project.id} - PR] 🔍 Recherche de PRs ouvertes à fusionner avant de lancer une nouvelle tâche...`);
+
+    const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls?state=open&sort=created&direction=asc`, {
+      headers: {
+        'Authorization': `Bearer ${project.githubToken}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+
+    if (!res.ok) {
+        const errorText = await res.text();
+        console.error(`[${project.id} - GitHub] API Error fetching open PRs: ${res.status} ${res.statusText} - ${errorText}`);
+        return;
+    }
+
+    const prs = await res.json();
+    if (prs.length === 0) {
+      console.log(`[${project.id} - PR] ℹ️ Aucune PR ouverte à fusionner.`);
+      return;
+    }
+
+    for (const pr of prs) {
+      if (pr.title && pr.title.toLowerCase().includes('bump')) {
+        console.log(`[${project.id} - PR] ℹ️ Ignoré (Bump PR): PR #${pr.number} - ${pr.title}`);
+        continue;
+      }
+
+      console.log(`[${project.id} - PR] ⚙️ Tentative d'auto-merge de la PR ouverte #${pr.number} (${pr.title})...`);
+      const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${pr.number}/merge`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${project.githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ merge_method: 'merge' })
+      });
+
+      if (mergeRes.ok) {
+        console.log(`[${project.id} - PR] 🟢 SUCCÈS : PR #${pr.number} fusionnée automatiquement !`);
+      } else {
+        console.error(`[${project.id} - PR] 🔴 ÉCHEC de l'auto-merge de la PR #${pr.number}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
+      }
+    }
+  } catch (error) {
+    console.error(`[${project.id} - PR] Erreur critique lors de mergeOpenPRs :`, error);
+  }
+}
