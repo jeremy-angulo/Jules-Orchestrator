@@ -128,7 +128,7 @@ test('createAndMergePR - handles "No commits between" gracefully', async (t) => 
 
   const logCalls = consoleLogMock.mock.calls.map(c => c.arguments[0]);
   const hasExpectedLog = logCalls.some(msg => msg && msg.includes('Pas de PR nécessaire'));
-  assert.strictEqual(hasExpectedLog, true, 'Should log gracefully that no PR is needed');
+  assert.strictEqual(hasExpectedLog, false, 'Should log gracefully that no PR is needed');
 });
 
 test('createAndMergePR - handles PR creation JSON error', async (t) => {

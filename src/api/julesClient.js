@@ -3,15 +3,12 @@ import { sleep } from '../utils/helpers.js';
 import { checkAndMergePR } from './githubClient.js';
 import { getAvailableToken, QuotaExceededError } from './tokenRotation.js';
 import { incrementTokenUsage } from '../db/database.js';
-
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
-
 /**
  * Base API client for Jules REST API
  */
 export async function julesAPI(agentName, endpoint, method = 'GET', body = null, queryParams = null) {
   let url = `${JULES_API_BASE}${endpoint}`;
-
   if (queryParams) {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(queryParams)) {
@@ -24,25 +21,20 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
       url += `?${queryString}`;
     }
   }
-
   // Use dynamic token logic via tokenRotation.js
   const token = getAvailableToken(agentName);
-
   // Track usage for sessions creation / messages
   if (method === 'POST' && (endpoint === '/sessions' || endpoint.includes(':sendMessage'))) {
     incrementTokenUsage(token, agentName);
   }
-
   const options = {
     method,
     headers: { 'X-Goog-Api-Key': token }
   };
-
   if (body) {
     options.headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(body);
   }
-
   try {
     const res = await fetch(url, options);
     if (!res.ok) {
@@ -56,7 +48,6 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
       console.error(`[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
       return null;
     }
-
     // Some endpoints like DELETE might return empty responses
     const text = await res.text();
     return text ? JSON.parse(text) : {};
@@ -65,24 +56,19 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     return null;
   }
 }
-
 // ==========================================
 // SOURCES METHODS
 // ==========================================
-
 export async function listSources(agentName, pageSize, pageToken, filter) {
   return julesAPI(agentName, '/sources', 'GET', null, { pageSize, pageToken, filter });
 }
-
 export async function getSource(agentName, sourceId) {
   const safeId = sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`;
   return julesAPI(agentName, `/${safeId}`);
 }
-
 // ==========================================
 // SESSIONS METHODS
 // ==========================================
-
 export async function createSession(agentName, prompt, title, sourceId, startingBranch, automationMode) {
   const body = {
     prompt,
@@ -94,71 +80,56 @@ export async function createSession(agentName, prompt, title, sourceId, starting
       }
     }
   };
-
   if (automationMode) {
     body.automationMode = automationMode;
   }
-
   return julesAPI(agentName, '/sessions', 'POST', body);
 }
-
 export async function listSessions(agentName, pageSize, pageToken) {
   return julesAPI(agentName, '//sessions', 'GET', null, { pageSize, pageToken });
 }
-
 export async function getSession(agentName, sessionId) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
   return julesAPI(agentName, `/${safeId}`);
 }
-
 export async function deleteSession(agentName, sessionId) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
   return julesAPI(agentName, `/${safeId}`, 'DELETE');
 }
-
 export async function sendMessage(agentName, sessionId, message) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
   return julesAPI(agentName, `/${safeId}:sendMessage`, 'POST', { prompt: message });
 }
-
 export async function approvePlan(agentName, sessionId) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
   return julesAPI(agentName, `/${safeId}:approvePlan`, 'POST', {});
 }
-
 // ==========================================
 // ACTIVITIES METHODS
 // ==========================================
-
 export async function listActivities(agentName, sessionId, pageSize, pageToken, createTime) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
   return julesAPI(agentName, `/${safeId}/activities`, 'GET', null, { pageSize, pageToken, createTime });
 }
-
 export async function getActivity(agentName, sessionId, activityId) {
   const safeSessionId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
   return julesAPI(agentName, `/${safeSessionId}/activities/${activityId}`);
 }
-
 // ==========================================
 // WORKFLOW METHODS
 // ==========================================
-
 /**
  * Starts a Jules session and monitors it until completion or failure.
  */
 export async function startAndMonitorSession(instruction, agentName, project) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
-
   const MAX_RETRIES = 3;
   let attempt = 0;
-
   while (attempt < MAX_RETRIES) {
     attempt++;
     try {
       // Format sourceId: prepend 'sources/github/'
       const formattedSourceId = `sources/github/${project.githubRepo || ''}`;
-
       // Create the session
       const session = await createSession(
         agentName,
@@ -168,28 +139,21 @@ export async function startAndMonitorSession(instruction, agentName, project) {
         project.githubBranch || 'main', // Using configured branch or defaulting to main
         "AUTO_CREATE_PR"
       );
-
       if (!session || !session.name) {
         console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session. (Tentative ${attempt}/${MAX_RETRIES})`);
         if (attempt >= MAX_RETRIES) return false;
         await sleep(30000);
         continue;
       }
-
       let sessionName = session.name;
-
       // Boucle de surveillance infinie jusqu'à complétion ou échec
       while (true) {
         const state = await getSession(agentName, sessionName);
-
         if (!state) {
-          console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
           await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
           continue;
         }
-
         if (state.state === 'AWAITING_PLAN_APPROVAL') {
-          console.log(`[${project.id} - ${agentName}] ⏳ Session en attente d'approbation du plan. Validation automatique...`);
           await approvePlan(agentName, sessionName);
         } else if (state.state === 'AWAITING_USER_FEEDBACK') {
           console.log(`[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
@@ -207,7 +171,6 @@ export async function startAndMonitorSession(instruction, agentName, project) {
               }
             }
           }
-
           if (prUrl) {
               const match = prUrl.match(/\/pull\/(\d+)$/);
               if (match) {
@@ -216,32 +179,24 @@ export async function startAndMonitorSession(instruction, agentName, project) {
                   setTimeout(() => checkAndMergePR(project, prNumber), 180000);
               }
           }
-
           if (!hasPR) {
-            console.warn(`[⚠️ ${project.id} - ${agentName}] Session COMPLETED mais aucune Pull Request détectée !`);
             return false;
           }
-
           console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès et PR détectée !`);
           return true;
         }
         else if (state.state === 'FAILED') {
-          console.log(`[${project.id} - ${agentName}] ❌ Échec de la tâche côté Jules. (Tentative ${attempt}/${MAX_RETRIES})`);
           break; // Sort de la boucle de surveillance pour recommencer une nouvelle session
         }
-
         // On attend avant de revérifier l'état
         await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
       }
     } catch (e) {
       console.error(`[${project.id} - ${agentName}] Erreur critique lors de la surveillance (Tentative ${attempt}/${MAX_RETRIES}):`, e);
     }
-
     if (attempt < MAX_RETRIES) {
-      console.log(`[${project.id} - ${agentName}] 🔄 Relance de l'agent après échec...`);
       await sleep(30000); // Wait before retrying
     }
   }
-
   return false;
 }

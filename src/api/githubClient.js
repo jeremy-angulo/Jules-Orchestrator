@@ -15,7 +15,6 @@ export async function getNextGitHubIssue(project) {
     return null;
   }
 }
-
 export async function closeGitHubIssue(project, issueNumber) {
     try {
         const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/issues/${issueNumber}`, {
@@ -30,11 +29,8 @@ export async function closeGitHubIssue(project, issueNumber) {
         console.error(`[${project.id} - GitHub] Network Error closing issue #${issueNumber}:`, error);
     }
 }
-
 export async function createAndMergePR(project, sourceBranch, targetBranch) {
   try {
-    console.log(`\n[${project.id} - Pipeline] 📦 Création de la PR de ${sourceBranch} vers ${targetBranch}...`);
-
     // Étape A : Créer la PR
     const createRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls`, {
       method: 'POST',
@@ -50,7 +46,6 @@ export async function createAndMergePR(project, sourceBranch, targetBranch) {
         body: "Automated PR created by Jules Orchestrator after successful build and tests."
       })
     });
-
     if (!createRes.ok) {
       let err;
       try {
@@ -58,18 +53,14 @@ export async function createAndMergePR(project, sourceBranch, targetBranch) {
       } catch (e) {
           throw new Error(`Erreur API GitHub lors de la création PR (non-JSON): ${createRes.status} ${createRes.statusText}`);
       }
-
       // On gère gracieusement le fait qu'il n'y ait pas de nouveau code à fusionner aujourd'hui
       if (err.errors && err.errors[0] && err.errors[0].message && err.errors[0].message.includes('No commits between')) {
-        console.log(`[${project.id} - Pipeline] ℹ️ Le code de ${sourceBranch} et ${targetBranch} est déjà identique. Pas de PR nécessaire.`);
         return;
       }
       throw new Error(`Erreur API GitHub lors de la création PR: ${JSON.stringify(err)}`);
     }
-
     const pr = await createRes.json();
     console.log(`[${project.id} - Pipeline] ✅ PR #${pr.number} créée avec succès. Auto-Merge en cours...`);
-
     // Étape B : Fusionner la PR automatiquement
     const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${pr.number}/merge`, {
       method: 'PUT',
@@ -80,7 +71,6 @@ export async function createAndMergePR(project, sourceBranch, targetBranch) {
       },
       body: JSON.stringify({ merge_method: 'merge' })
     });
-
     if (mergeRes.ok) {
       console.log(`[${project.id} - Pipeline] 🟢 SUCCÈS : PR #${pr.number} fusionnée sur ${targetBranch} !`);
     } else {
@@ -90,11 +80,8 @@ export async function createAndMergePR(project, sourceBranch, targetBranch) {
     console.error(`[${project.id} - Pipeline] Erreur critique lors de la gestion de la PR :`, error);
   }
 }
-
 export async function checkAndMergePR(project, prNumber) {
   try {
-    console.log(`\n[${project.id} - PR] 🔍 Vérification de la PR #${prNumber} après 3 minutes...`);
-
     // 1. Récupérer les détails de la PR
     const getRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}`, {
       headers: {
@@ -102,28 +89,20 @@ export async function checkAndMergePR(project, prNumber) {
         'Accept': 'application/vnd.github.v3+json'
       }
     });
-
     if (!getRes.ok) {
       console.error(`[${project.id} - PR] ❌ Erreur API GitHub lors de la récupération de la PR #${prNumber}: ${getRes.status} ${getRes.statusText}`);
       return;
     }
-
     const pr = await getRes.json();
-
     // 2. Vérifier si elle est déjà mergée
     if (pr.merged) {
-      console.log(`[${project.id} - PR] ℹ️ La PR #${prNumber} est déjà mergée. Aucune action nécessaire.`);
       return;
     }
-
     // 3. Vérifier le titre (pas de "bump")
     if (pr.title.toLowerCase().includes('bump')) {
-      console.log(`[${project.id} - PR] ℹ️ La PR #${prNumber} contient "bump" dans le titre. Merge manuel requis.`);
       return;
     }
-
     // 4. Si non mergée et pas de "bump", on merge
-    console.log(`[${project.id} - PR] ⚙️ Tentative d'auto-merge de la PR #${prNumber}...`);
     const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/merge`, {
       method: 'PUT',
       headers: {
@@ -133,7 +112,6 @@ export async function checkAndMergePR(project, prNumber) {
       },
       body: JSON.stringify({ merge_method: 'merge' })
     });
-
     if (mergeRes.ok) {
       console.log(`[${project.id} - PR] 🟢 SUCCÈS : PR #${prNumber} fusionnée automatiquement !`);
     } else {
@@ -141,42 +119,31 @@ export async function checkAndMergePR(project, prNumber) {
       const errText = await mergeRes.text();
       console.error(`Détails: ${errText}`);
     }
-
   } catch (error) {
     console.error(`[${project.id} - PR] Erreur critique lors de checkAndMergePR :`, error);
   }
 }
-
 export async function mergeOpenPRs(project) {
   try {
-    console.log(`\n[${project.id} - PR] 🔍 Recherche de PRs ouvertes à fusionner avant de lancer une nouvelle tâche...`);
-
     const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls?state=open&sort=created&direction=asc`, {
       headers: {
         'Authorization': `Bearer ${project.githubToken}`,
         'Accept': 'application/vnd.github.v3+json'
       }
     });
-
     if (!res.ok) {
         const errorText = await res.text();
         console.error(`[${project.id} - GitHub] API Error fetching open PRs: ${res.status} ${res.statusText} - ${errorText}`);
         return;
     }
-
     const prs = await res.json();
     if (prs.length === 0) {
-      console.log(`[${project.id} - PR] ℹ️ Aucune PR ouverte à fusionner.`);
       return;
     }
-
     for (const pr of prs) {
       if (pr.title && pr.title.toLowerCase().includes('bump')) {
-        console.log(`[${project.id} - PR] ℹ️ Ignoré (Bump PR): PR #${pr.number} - ${pr.title}`);
         continue;
       }
-
-      console.log(`[${project.id} - PR] ⚙️ Tentative d'auto-merge de la PR ouverte #${pr.number} (${pr.title})...`);
       const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${pr.number}/merge`, {
         method: 'PUT',
         headers: {
@@ -186,7 +153,6 @@ export async function mergeOpenPRs(project) {
         },
         body: JSON.stringify({ merge_method: 'merge' })
       });
-
       if (mergeRes.ok) {
         console.log(`[${project.id} - PR] 🟢 SUCCÈS : PR #${pr.number} fusionnée automatiquement !`);
       } else {
