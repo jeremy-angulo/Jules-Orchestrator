@@ -1,7 +1,7 @@
 import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
-import { getNextGitHubIssue, closeGitHubIssue } from '../api/githubClient.js';
-import { isProjectLocked, incrementTasks, decrementTasks } from '../db/database.js';
+import { getNextGitHubIssue, closeGitHubIssue, mergeOpenPRs } from '../api/githubClient.js';
+import { isProjectLocked, incrementTasks, decrementTasks, lockProject, unlockProject, getActiveTasks } from '../db/database.js';
 
 /**
  * Formats the instruction for the Issue Agent with security delimiters and warnings.
@@ -23,25 +23,39 @@ export async function runIssueAgent(project) {
 
       const issue = await getNextGitHubIssue(project);
       if (issue) {
+        console.log(`\n[${project.id} - Issue] 📥 Issue #${issue.number} reçue : ${issue.title}. Verrouillage du projet...`);
+        lockProject(project.id);
         incrementTasks(project.id);
-        console.log(`\n[${project.id} - Issue] 📥 Issue #${issue.number} reçue : ${issue.title}`);
 
-      const instruction = formatIssueInstruction(issue);
-      const success = await startAndMonitorSession(instruction, "Issue Agent", project);
+        try {
+          while (getActiveTasks(project.id) > 1) {
+            console.log(`[${project.id} - Issue] ⏳ Attente de la fin des agents de fond (${getActiveTasks(project.id) - 1} restants)...`);
+            await sleep(15000);
+          }
 
-        // On ferme l'Issue uniquement si Jules a réussi sa tâche
-        if (success) {
-          console.log(`[${project.id} - Issue] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);
-          await closeGitHubIssue(project, issue.number);
+          console.log(`[${project.id} - Issue] 🚀 Agents de fond terminés. Tentative de merge des PRs ouvertes...`);
+          await mergeOpenPRs(project);
+
+          const instruction = formatIssueInstruction(issue);
+          const success = await startAndMonitorSession(instruction, "Issue Agent", project);
+
+          // On ferme l'Issue uniquement si Jules a réussi sa tâche
+          if (success) {
+            console.log(`[${project.id} - Issue] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);
+            await closeGitHubIssue(project, issue.number);
+          }
+        } finally {
+          decrementTasks(project.id);
+          unlockProject(project.id);
+          console.log(`[${project.id} - Issue] 🔓 Déverrouillage du projet après l'Issue #${issue.number}.`);
         }
-        decrementTasks(project.id);
       }
 
       // Vérification toutes les 30 secondes
       await sleep(30000);
     } catch (error) {
        console.error(`[${project.id}] ❌ Erreur critique dans la boucle Issue :`, error);
-       decrementTasks(project.id);
+       unlockProject(project.id); // Secure unlock just in case
        await sleep(60000);
     }
   }

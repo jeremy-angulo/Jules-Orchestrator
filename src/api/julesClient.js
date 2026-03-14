@@ -71,7 +71,7 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
 // ==========================================
 
 export async function listSources(agentName, pageSize, pageToken, filter) {
-  return julesAPI(agentName, '//sources', 'GET', null, { pageSize, pageToken, filter });
+  return julesAPI(agentName, '/sources', 'GET', null, { pageSize, pageToken, filter });
 }
 
 export async function getSource(agentName, sourceId) {
@@ -150,84 +150,98 @@ export async function getActivity(agentName, sessionId, activityId) {
 export async function startAndMonitorSession(instruction, agentName, project) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
 
-  try {
-    // Format sourceId: prepend 'sources/github/'
-    const formattedSourceId = `sources/github-${project.githubRepo ? project.githubRepo.replace(/\//g, '-') : ''}`;
+  const MAX_RETRIES = 3;
+  let attempt = 0;
 
-    // Create the session
-    const session = await createSession(
-      agentName,
-      instruction,
-      `${agentName} Task for ${project.id}`,
-      formattedSourceId,
-      project.githubBranch || 'main', // Using configured branch or defaulting to main
-      "AUTO_CREATE_PR"
-    );
+  while (attempt < MAX_RETRIES) {
+    attempt++;
+    try {
+      // Format sourceId: prepend 'sources/github/'
+      const formattedSourceId = `sources/github/${project.githubRepo || ''}`;
 
-    if (!session || !session.name) {
-      console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session.`);
-      return false;
-    }
+      // Create the session
+      const session = await createSession(
+        agentName,
+        instruction,
+        `${agentName} Task for ${project.id}`,
+        formattedSourceId,
+        project.githubBranch || 'main', // Using configured branch or defaulting to main
+        "AUTO_CREATE_PR"
+      );
 
-    let sessionName = session.name;
-
-    // Boucle de surveillance infinie jusqu'à complétion ou échec
-    while (true) {
-      const state = await getSession(agentName, sessionName);
-
-      if (!state) {
-        console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
-        await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+      if (!session || !session.name) {
+        console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session. (Tentative ${attempt}/${MAX_RETRIES})`);
+        if (attempt >= MAX_RETRIES) return false;
+        await sleep(30000);
         continue;
       }
 
-      if (state.state === 'AWAITING_PLAN_APPROVAL') {
-        console.log(`[${project.id} - ${agentName}] ⏳ Session en attente d'approbation du plan. Validation automatique...`);
-        await approvePlan(agentName, sessionName);
-      } else if (state.state === 'AWAITING_USER_FEEDBACK') {
-        console.log(`[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
-        await sendMessage(agentName, sessionName, "keep going");
-      } else if (state.state === 'COMPLETED') {
-        // Anti-Triche : Vérifier qu'une PR a bien été créée
-        let hasPR = false;
-        let prUrl = null;
-        if (state.outputs && Array.isArray(state.outputs)) {
-          for (const output of state.outputs) {
-            if (output.pullRequest) {
-              hasPR = true;
-              prUrl = output.pullRequest.url;
-              break;
+      let sessionName = session.name;
+
+      // Boucle de surveillance infinie jusqu'à complétion ou échec
+      while (true) {
+        const state = await getSession(agentName, sessionName);
+
+        if (!state) {
+          console.error(`[${project.id} - ${agentName}] ⚠️ Impossible de récupérer l'état de la session (retour nul). Nouvelle tentative dans ${GLOBAL_CONFIG.POLLING_INTERVAL}ms...`);
+          await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+          continue;
+        }
+
+        if (state.state === 'AWAITING_PLAN_APPROVAL') {
+          console.log(`[${project.id} - ${agentName}] ⏳ Session en attente d'approbation du plan. Validation automatique...`);
+          await approvePlan(agentName, sessionName);
+        } else if (state.state === 'AWAITING_USER_FEEDBACK') {
+          console.log(`[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
+          await sendMessage(agentName, sessionName, "keep going");
+        } else if (state.state === 'COMPLETED') {
+          // Anti-Triche : Vérifier qu'une PR a bien été créée
+          let hasPR = false;
+          let prUrl = null;
+          if (state.outputs && Array.isArray(state.outputs)) {
+            for (const output of state.outputs) {
+              if (output.pullRequest) {
+                hasPR = true;
+                prUrl = output.pullRequest.url;
+                break;
+              }
             }
           }
+
+          if (prUrl) {
+              const match = prUrl.match(/\/pull\/(\d+)$/);
+              if (match) {
+                  const prNumber = match[1];
+                  // Planifier la vérification et le merge après 3 minutes
+                  setTimeout(() => checkAndMergePR(project, prNumber), 180000);
+              }
+          }
+
+          if (!hasPR) {
+            console.warn(`[⚠️ ${project.id} - ${agentName}] Session COMPLETED mais aucune Pull Request détectée !`);
+            return false;
+          }
+
+          console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès et PR détectée !`);
+          return true;
+        }
+        else if (state.state === 'FAILED') {
+          console.log(`[${project.id} - ${agentName}] ❌ Échec de la tâche côté Jules. (Tentative ${attempt}/${MAX_RETRIES})`);
+          break; // Sort de la boucle de surveillance pour recommencer une nouvelle session
         }
 
-        if (prUrl) {
-            const match = prUrl.match(/\/pull\/(\d+)$/);
-            if (match) {
-                const prNumber = match[1];
-                // Planifier la vérification et le merge après 3 minutes
-                setTimeout(() => checkAndMergePR(project, prNumber), 180000);
-            }
-        }
-
-        if (!hasPR) {
-          console.warn(`[\u26A0\uFE0F ${project.id} - ${agentName}] Session COMPLETED mais aucune Pull Request détectée !`);
-          return false;
-        }
-
-        console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès et PR détectée !`);
-        return true;
+        // On attend avant de revérifier l'état
+        await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
       }
-      else if (state.state === 'FAILED') {
-        console.log(`[${project.id} - ${agentName}] ❌ Échec de la tâche côté Jules.`);
-        return false;
-      }
-
-      // On attend avant de revérifier l'état
-      await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+    } catch (e) {
+      console.error(`[${project.id} - ${agentName}] Erreur critique lors de la surveillance (Tentative ${attempt}/${MAX_RETRIES}):`, e);
     }
-  } catch (e) {
-    console.error(`[${project.id} - ${agentName}] Erreur critique lors de la surveillance :`, e);
-    return false;
+
+    if (attempt < MAX_RETRIES) {
+      console.log(`[${project.id} - ${agentName}] 🔄 Relance de l'agent après échec...`);
+      await sleep(30000); // Wait before retrying
+    }
   }
+
+  return false;
 }

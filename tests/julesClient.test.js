@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { julesAPI, startAndMonitorSession } from '../src/api/julesClient.js';
 import { GLOBAL_CONFIG } from '../src/config.js';
+import Database from 'better-sqlite3';
+const db = new Database('orchestrator.db');
+
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 
@@ -12,6 +15,11 @@ const mockProject = {
 
 // Replace polling interval for faster tests
 GLOBAL_CONFIG.POLLING_INTERVAL = 10;
+
+
+test.beforeEach(() => {
+  db.exec('DELETE FROM api_usage');
+});
 
 test('julesAPI - handles network errors', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Fetch failed'); });
@@ -41,7 +49,7 @@ test('startAndMonitorSession - completes successfully and verifies PR', async (t
       callCount++;
       if (callCount === 1) { // Session creation
         const body = JSON.parse(options.body);
-        assert.strictEqual(body.sourceContext.source, 'sources/github-test-repo', 'Source ID should match API format with slashes');
+        assert.strictEqual(body.sourceContext.source, 'sources/github/test/repo', 'Source ID should match API format with slashes');
         return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
       }
       if (callCount === 2) { // First poll -> COMPLETED
