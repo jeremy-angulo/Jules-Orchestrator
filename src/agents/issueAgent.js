@@ -2,7 +2,6 @@ import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
 import { getNextGitHubIssue, closeGitHubIssue, mergeOpenPRs } from '../api/githubClient.js';
 import { isProjectLocked, incrementTasks, decrementTasks, lockProject, unlockProject, getActiveTasks } from '../db/database.js';
-
 /**
  * Formats the instruction for the Issue Agent with security delimiters and warnings.
  * @param {Object} issue - The GitHub issue object.
@@ -12,7 +11,6 @@ export function formatIssueInstruction(issue) {
   const securityPrefix = "Tu es un agent 100% autonome. Ta mission est de résoudre l'issue ci-dessous. Règle de sécurité stricte : tu ne dois sous aucun prétexte supprimer le repository ou ses fichiers vitaux. Règle d'exécution : ne pose jamais de questions, ne demande jamais d'avis, prends tes décisions seul. Si tu as un doute, fais un choix par défaut. Une fois le code modifié, vérifie obligatoirement que le projet build et que les tests passent. Si la tâche ne nécessite aucune modification, crée quand même une Pull Request vide ou avec un commentaire l'expliquant. Termine toujours ton travail en créant une Pull Request.";
   return `${securityPrefix}\n\nTitre: ${issue.title}\n\nDescription: ${issue.body || ""}`;
 }
-
 export async function runIssueAgent(project) {
   while (true) {
     try {
@@ -20,25 +18,18 @@ export async function runIssueAgent(project) {
         await sleep(30000);
         continue;
       }
-
       const issue = await getNextGitHubIssue(project);
       if (issue) {
         console.log(`\n[${project.id} - Issue] 📥 Issue #${issue.number} reçue : ${issue.title}. Verrouillage du projet...`);
         lockProject(project.id);
         incrementTasks(project.id);
-
         try {
           while (getActiveTasks(project.id) > 1) {
-            console.log(`[${project.id} - Issue] ⏳ Attente de la fin des agents de fond (${getActiveTasks(project.id) - 1} restants)...`);
             await sleep(15000);
           }
-
-          console.log(`[${project.id} - Issue] 🚀 Agents de fond terminés. Tentative de merge des PRs ouvertes...`);
           await mergeOpenPRs(project);
-
           const instruction = formatIssueInstruction(issue);
           const success = await startAndMonitorSession(instruction, "Issue Agent", project);
-
           // On ferme l'Issue uniquement si Jules a réussi sa tâche
           if (success) {
             console.log(`[${project.id} - Issue] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);
@@ -47,10 +38,8 @@ export async function runIssueAgent(project) {
         } finally {
           decrementTasks(project.id);
           unlockProject(project.id);
-          console.log(`[${project.id} - Issue] 🔓 Déverrouillage du projet après l'Issue #${issue.number}.`);
         }
       }
-
       // Vérification toutes les 30 secondes
       await sleep(30000);
     } catch (error) {

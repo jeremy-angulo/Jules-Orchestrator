@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 
-const db = new Database('orchestrator.db', { verbose: console.log });
+const db = new Database('orchestrator.db');
 db.pragma('journal_mode = WAL');
 
 
