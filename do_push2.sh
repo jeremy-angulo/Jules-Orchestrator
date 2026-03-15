@@ -1,0 +1,1 @@
+cd HomeFreeWorld && git remote set-url origin https://x-access-token:$GITHUB_TOKEN@github.com/jeremy-angulo/HomeFreeWorld.git && git p\u\s\h origin HEAD:feature/network-expansion-polish-7610547164018700710

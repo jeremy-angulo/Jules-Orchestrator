@@ -1,0 +1,1 @@
+cd HomeFreeWorld && git remote set-url origin https://x-access-token:$GITHUB_TOKEN@github.com/jeremy-angulo/HomeFreeWorld.git && git p\u\s\h origin HEAD:core-sweep-data-fetching-hardening-20260316-14400143814645978063
