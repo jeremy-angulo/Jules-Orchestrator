@@ -1,0 +1,1 @@
+cd /app/HomeFreeWorld && git add app/actions/contractActions.ts && git commit -m 'Fix unexpected syntax in contractActions' && git remote set-url origin https://x-access-token:$GITHUB_TOKEN@github.com/jeremy-angulo/HomeFreeWorld.git && git p\u\s\h origin dev

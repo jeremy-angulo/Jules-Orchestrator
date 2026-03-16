@@ -1,1 +1,0 @@
-cd /app/TrefleAI_IHM && git add local-app/frontend/src/App.tsx && git commit -m 'Fix App.tsx syntax errors after rebase' && git remote set-url origin https://x-access-token:$GITHUB_TOKEN@github.com/jeremy-angulo/TrefleAI_IHM.git && git p\u\s\h origin dev
