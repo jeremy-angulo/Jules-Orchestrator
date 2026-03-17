@@ -60,7 +60,7 @@ export function scheduleDailyPRMergePipeline(project) {
 
       console.log(`[${project.id} - PR Merge Pipeline] 🚀 Lancement de l'agent de résolution et fusion des PR.`);
 
-      const prompt = `Role : You are the Chief Release Manager & Code Integrator Agent.
+      const prompt = `En utilisant la clé API GITHUB_TOKEN disponible dans ton environnement.\nYou are managing the following repositories: HomeFreeWorld and TrefleAI_IHM.\nRole : You are the Chief Release Manager & Code Integrator Agent.
 CRITICAL RULE: You are 100% autonomous. You do NOT ask for permission or wait.
 MISSION: Daily End-of-Day Pull Request Merge & CI Verification.
 STEP 1 (AUDIT PRs): Check all open Pull Requests in the repository.
