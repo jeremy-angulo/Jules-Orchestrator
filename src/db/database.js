@@ -33,34 +33,61 @@ const unlockProjectStmt = db.prepare('UPDATE project_states SET is_locked_for_da
 const incrementTasksStmt = db.prepare('UPDATE project_states SET active_tasks = active_tasks + 1 WHERE project_id = ?');
 const decrementTasksStmt = db.prepare('UPDATE project_states SET active_tasks = MAX(0, active_tasks - 1) WHERE project_id = ?');
 
-export function initProjectState(projectId) {
+// In-memory cache for project states to avoid blocking the event loop with synchronous SQLite calls
+const projectCache = new Map();
+
+// Initialize cache from database
+const allProjects = db.prepare('SELECT * FROM project_states').all();
+for (const row of allProjects) {
+  projectCache.set(row.project_id, {
+    is_locked_for_daily: !!row.is_locked_for_daily,
+    active_tasks: row.active_tasks
+  });
+}
+
+export async function initProjectState(projectId) {
   insertProjectStmt.run(projectId);
+  if (!projectCache.has(projectId)) {
+    projectCache.set(projectId, { is_locked_for_daily: false, active_tasks: 0 });
+  }
 }
 
-export function lockProject(projectId) {
+export async function lockProject(projectId) {
   lockProjectStmt.run(projectId);
+  const state = projectCache.get(projectId) || { active_tasks: 0 };
+  state.is_locked_for_daily = true;
+  projectCache.set(projectId, state);
 }
 
-export function unlockProject(projectId) {
+export async function unlockProject(projectId) {
   unlockProjectStmt.run(projectId);
+  const state = projectCache.get(projectId) || { active_tasks: 0 };
+  state.is_locked_for_daily = false;
+  projectCache.set(projectId, state);
 }
 
-export function incrementTasks(projectId) {
+export async function incrementTasks(projectId) {
   incrementTasksStmt.run(projectId);
+  const state = projectCache.get(projectId) || { is_locked_for_daily: false, active_tasks: 0 };
+  state.active_tasks++;
+  projectCache.set(projectId, state);
 }
 
-export function decrementTasks(projectId) {
+export async function decrementTasks(projectId) {
   decrementTasksStmt.run(projectId);
+  const state = projectCache.get(projectId) || { is_locked_for_daily: false, active_tasks: 0 };
+  state.active_tasks = Math.max(0, state.active_tasks - 1);
+  projectCache.set(projectId, state);
 }
 
-export function isProjectLocked(projectId) {
-  const row = getProjectStateStmt.get(projectId);
-  return row ? !!row.is_locked_for_daily : false;
+export async function isProjectLocked(projectId) {
+  const state = projectCache.get(projectId);
+  return state ? state.is_locked_for_daily : false;
 }
 
-export function getActiveTasks(projectId) {
-  const row = getProjectStateStmt.get(projectId);
-  return row ? row.active_tasks : 0;
+export async function getActiveTasks(projectId) {
+  const state = projectCache.get(projectId);
+  return state ? state.active_tasks : 0;
 }
 
 // --- API Usage Tracking ---

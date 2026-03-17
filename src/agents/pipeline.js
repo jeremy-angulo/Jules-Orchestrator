@@ -9,9 +9,9 @@ export function scheduleBuildAndMergePipeline(project) {
     try {
       console.log(`\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour le Build & Merge...`);
       // 1. Lever le drapeau rouge
-      lockProject(project.id);
+      await lockProject(project.id);
       // 2. Attendre que les agents en cours finissent leur travail proprement
-      while (getActiveTasks(project.id) > 0) {
+      while (await getActiveTasks(project.id) > 0) {
         await sleep(15000);
       }
       console.log(`[${project.id} - Pipeline] 🚀 Repo libre ! Jules vérifie le build sur la branche ${project.buildAndMergePipeline.sourceBranch}.`);
@@ -19,7 +19,7 @@ export function scheduleBuildAndMergePipeline(project) {
       const prompt = pipeline.prompt
         .replace(/{sourceBranch}/g, pipeline.sourceBranch)
         .replace(/{targetBranch}/g, pipeline.targetBranch);
-      incrementTasks(project.id);
+      await incrementTasks(project.id);
       // 3. Jules valide, nettoie et commit sur dev
       const success = await startAndMonitorSession(prompt, "Build & Merge Agent", project);
       // 4. Si Jules a réussi à stabiliser le build, Node.js crée la PR et la fusionne
@@ -31,9 +31,9 @@ export function scheduleBuildAndMergePipeline(project) {
     } catch (error) {
         console.error(`[${project.id} - Pipeline] ❌ Erreur critique lors du Build & Merge :`, error);
     } finally {
-        decrementTasks(project.id);
+        await decrementTasks(project.id);
         // 5. Baisse du drapeau rouge, les agents de fond reprennent
-        unlockProject(project.id);
+        await unlockProject(project.id);
     }
   });
 }

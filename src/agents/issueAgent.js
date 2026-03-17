@@ -14,17 +14,17 @@ export function formatIssueInstruction(issue) {
 export async function runIssueAgent(project) {
   while (true) {
     try {
-      if (isProjectLocked(project.id)) {
+      if (await isProjectLocked(project.id)) {
         await sleep(30000);
         continue;
       }
       const issue = await getNextGitHubIssue(project);
       if (issue) {
         console.log(`\n[${project.id} - Issue] 📥 Issue #${issue.number} reçue : ${issue.title}. Verrouillage du projet...`);
-        lockProject(project.id);
-        incrementTasks(project.id);
+        await lockProject(project.id);
+        await incrementTasks(project.id);
         try {
-          while (getActiveTasks(project.id) > 1) {
+          while (await getActiveTasks(project.id) > 1) {
             await sleep(15000);
           }
           await mergeOpenPRs(project);
@@ -36,15 +36,15 @@ export async function runIssueAgent(project) {
             await closeGitHubIssue(project, issue.number);
           }
         } finally {
-          decrementTasks(project.id);
-          unlockProject(project.id);
+          await decrementTasks(project.id);
+          await unlockProject(project.id);
         }
       }
       // Vérification toutes les 30 secondes
       await sleep(30000);
     } catch (error) {
        console.error(`[${project.id}] ❌ Erreur critique dans la boucle Issue :`, error);
-       unlockProject(project.id); // Secure unlock just in case
+       await unlockProject(project.id); // Secure unlock just in case
        await sleep(60000);
     }
   }
