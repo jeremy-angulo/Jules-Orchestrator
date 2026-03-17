@@ -18,7 +18,7 @@ GLOBAL_CONFIG.POLLING_INTERVAL = 10;
 
 
 test.beforeEach(() => {
-  db.exec('DELETE FROM api_usage');
+  db.exec('DELETE FROM api_calls_log');
 });
 
 test('julesAPI - handles network errors', async (t) => {
