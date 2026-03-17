@@ -9,6 +9,9 @@ export async function runBackgroundAgent(project) {
       return;
   }
 
+  // In-memory counter for fair sharing
+  const agentRuns = Array(project.backgroundPrompts.length).fill(0);
+
   // Parallélisation des prompts : un agent par prompt
   await Promise.all(project.backgroundPrompts.map(async (prompt, index) => {
     while (true) {
@@ -20,7 +23,17 @@ export async function runBackgroundAgent(project) {
           continue;
         }
 
+        // Equitable sharing check
+        const minRuns = Math.min(...agentRuns);
+        if (agentRuns[index] > minRuns) {
+            // Un autre agent est à la traîne, on lui laisse la priorité
+            await sleep(30000);
+            continue;
+        }
+
         incrementTasks(project.id); // On bloque une place
+
+        agentRuns[index]++;
 
         await startAndMonitorSession(prompt, `Background Agent - ${index}`, project);
 

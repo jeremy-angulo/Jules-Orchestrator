@@ -12,13 +12,11 @@ db.exec(`
     active_tasks INTEGER DEFAULT 0
   );
 
-  CREATE TABLE IF NOT EXISTS api_usage (
+  CREATE TABLE IF NOT EXISTS api_calls_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     token TEXT NOT NULL,
-    date TEXT NOT NULL,
     agent_name TEXT NOT NULL,
-    calls INTEGER DEFAULT 0,
-    UNIQUE(token, date, agent_name)
+    timestamp INTEGER NOT NULL
   );
 `);
 
@@ -65,33 +63,31 @@ export function getActiveTasks(projectId) {
 
 // --- API Usage Tracking ---
 
-const getTodayDate = () => new Date().toISOString().split('T')[0];
-
-const getTokenUsageStmt = db.prepare('SELECT SUM(calls) as total FROM api_usage WHERE token = ? AND date = ?');
-const getAgentUsageStmt = db.prepare('SELECT SUM(calls) as total FROM api_usage WHERE agent_name = ? AND date = ?');
-const getTotalUsageStmt = db.prepare('SELECT SUM(calls) as total FROM api_usage WHERE date = ?');
-const incrementTokenUsageStmt = db.prepare(`
-  INSERT INTO api_usage (token, date, agent_name, calls)
-  VALUES (?, ?, ?, 1)
-  ON CONFLICT(token, date, agent_name)
-  DO UPDATE SET calls = calls + 1
+const getTokenUsageStmt = db.prepare('SELECT COUNT(*) as total FROM api_calls_log WHERE token = ? AND timestamp >= ?');
+const getAgentUsageStmt = db.prepare('SELECT COUNT(*) as total FROM api_calls_log WHERE agent_name = ? AND timestamp >= ?');
+const getTotalUsageStmt = db.prepare('SELECT COUNT(*) as total FROM api_calls_log WHERE timestamp >= ?');
+const recordApiCallStmt = db.prepare(`
+  INSERT INTO api_calls_log (token, agent_name, timestamp)
+  VALUES (?, ?, ?)
 `);
 
-export function getTokenUsageToday(token) {
-  const row = getTokenUsageStmt.get(token, getTodayDate());
+const get24hAgoTimestamp = () => Date.now() - 24 * 60 * 60 * 1000;
+
+export function getTokenUsage24h(token) {
+  const row = getTokenUsageStmt.get(token, get24hAgoTimestamp());
   return row && row.total ? row.total : 0;
 }
 
-export function getAgentUsageToday(agentName) {
-  const row = getAgentUsageStmt.get(agentName, getTodayDate());
+export function getAgentUsage24h(agentName) {
+  const row = getAgentUsageStmt.get(agentName, get24hAgoTimestamp());
   return row && row.total ? row.total : 0;
 }
 
-export function getTotalUsageToday() {
-  const row = getTotalUsageStmt.get(getTodayDate());
+export function getTotalUsage24h() {
+  const row = getTotalUsageStmt.get(get24hAgoTimestamp());
   return row && row.total ? row.total : 0;
 }
 
-export function incrementTokenUsage(token, agentName) {
-  incrementTokenUsageStmt.run(token, getTodayDate(), agentName);
+export function recordApiCall(token, agentName) {
+  recordApiCallStmt.run(token, agentName, Date.now());
 }

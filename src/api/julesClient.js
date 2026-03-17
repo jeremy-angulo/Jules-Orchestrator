@@ -2,7 +2,7 @@ import { GLOBAL_CONFIG } from '../config.js';
 import { sleep } from '../utils/helpers.js';
 import { checkAndMergePR } from './githubClient.js';
 import { getAvailableToken, QuotaExceededError } from './tokenRotation.js';
-import { incrementTokenUsage } from '../db/database.js';
+import { recordApiCall } from '../db/database.js';
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 /**
  * Base API client for Jules REST API
@@ -25,7 +25,7 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
   const token = getAvailableToken(agentName);
   // Track usage for sessions creation / messages
   if (method === 'POST' && (endpoint === '/sessions' || endpoint.includes(':sendMessage'))) {
-    incrementTokenUsage(token, agentName);
+    recordApiCall(token, agentName);
   }
   const options = {
     method,
