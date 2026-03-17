@@ -85,9 +85,6 @@ export async function createSession(agentName, prompt, title, sourceId, starting
   }
   return julesAPI(agentName, '/sessions', 'POST', body);
 }
-export async function listSessions(agentName, pageSize, pageToken) {
-  return julesAPI(agentName, '//sessions', 'GET', null, { pageSize, pageToken });
-}
 export async function getSession(agentName, sessionId) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
   return julesAPI(agentName, `/${safeId}`);
