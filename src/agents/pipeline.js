@@ -38,53 +38,74 @@ export function scheduleBuildAndMergePipeline(project) {
   });
 }
 
-export function scheduleDailyPRMergePipeline(project) {
+export function scheduleGlobalDailyPRMergePipeline(projects) {
   // Execute daily at 17:00 PM
   cron.schedule("0 17 * * *", async () => {
     try {
-      console.log(`\n[${project.id} - PR Merge Pipeline] ⏰ Verrouillage du repo pour la fusion des PRs de la journée...`);
-      // 1. Lock the project
-      lockProject(project.id);
+      console.log(`\n[Global PR Merge Pipeline] ⏰ Verrouillage de tous les repos pour la fusion des PRs de la journée...`);
+      // 1. Lock all projects
+      for (const project of projects) {
+        lockProject(project.id);
+      }
 
-      // 2. Wait up to 1 hour (3600 seconds) for existing agents to finish
+      // 2. Wait up to 1 hour (3600 seconds) for existing agents to finish across all projects
       let waited = 0;
       const timeout = 3600;
-      while (getActiveTasks(project.id) > 0 && waited < timeout) {
-        await sleep(15000);
-        waited += 15;
+      let allTasksDone = false;
+
+      while (!allTasksDone && waited < timeout) {
+        let totalActiveTasks = 0;
+        for (const project of projects) {
+          totalActiveTasks += await getActiveTasks(project.id);
+        }
+
+        if (totalActiveTasks > 0) {
+          await sleep(15000);
+          waited += 15;
+        } else {
+          allTasksDone = true;
+        }
       }
 
       if (waited >= timeout) {
-          console.log(`[${project.id} - PR Merge Pipeline] ⚠️ Timeout atteint en attendant la fin des agents. Procéder quand même...`);
+          console.log(`[Global PR Merge Pipeline] ⚠️ Timeout atteint en attendant la fin des agents. Procéder quand même...`);
       }
 
-      console.log(`[${project.id} - PR Merge Pipeline] 🚀 Lancement de l'agent de résolution et fusion des PR.`);
+      console.log(`[Global PR Merge Pipeline] 🚀 Lancement de l'agent global de résolution et fusion des PR.`);
 
-      const prompt = `En utilisant la clé API GITHUB_TOKEN disponible dans ton environnement.\nYou are managing the following repositories: HomeFreeWorld and TrefleAI_IHM.\nRole : You are the Chief Release Manager & Code Integrator Agent.
+      const orchestratorProject = {
+        id: "Jules-Orchestrator",
+        githubRepo: "jeremy-angulo/Jules-Orchestrator",
+        githubBranch: "main",
+        githubToken: process.env.GITHUB_TOKEN,
+      };
+
+      const prompt = `En utilisant la clé API GITHUB_TOKEN disponible dans ton environnement.
+You are managing the following repositories: HomeFreeWorld and TrefleAI_IHM.
+Role : You are the Chief Release Manager & Code Integrator Agent.
 CRITICAL RULE: You are 100% autonomous. You do NOT ask for permission or wait.
 MISSION: Daily End-of-Day Pull Request Merge & CI Verification.
-STEP 1 (AUDIT PRs): Check all open Pull Requests in the repository.
+STEP 1 (AUDIT PRs): Check all open Pull Requests in all managed repositories.
 STEP 2 (MERGE & RESOLVE): For each PR, resolve any merge conflicts. If a PR is obsolete or duplicates work already done by another agent, close it with an explanation. Merge valid PRs into the main working branch (e.g., 'dev' or the configured source branch).
-STEP 3 (STABILIZE): Run 'npm install', 'npm run lint', 'npx tsc --noEmit' and 'npm run build' (or the equivalent Python/backend commands) to ensure the newly merged code compiles and builds correctly. Fix any errors autonomously.
+STEP 3 (STABILIZE): Ensure the newly merged code compiles and builds correctly for each project. Fix any errors autonomously.
 STEP 4 (DEPLOY TO PREVIEW): Once the main working branch is stable, merge it into the 'preview' branch.
-DO NOT STOP until the 'preview' branch is updated with the day's stable work.`;
+DO NOT STOP until the 'preview' branch is updated with the day's stable work across all managed repositories.`;
 
-      incrementTasks(project.id);
-
-      const success = await startAndMonitorSession(prompt, "Daily PR Merge Agent", project);
+      const success = await startAndMonitorSession(prompt, "Global Daily PR Merge Agent", orchestratorProject);
 
       if (success) {
-          console.log(`[${project.id} - PR Merge Pipeline] ✅ Fusion quotidienne des PR terminée avec succès.`);
+          console.log(`[Global PR Merge Pipeline] ✅ Fusion quotidienne des PR terminée avec succès.`);
       } else {
-          console.log(`[${project.id} - PR Merge Pipeline] ❌ L'agent a échoué à fusionner et stabiliser les PR de la journée.`);
+          console.log(`[Global PR Merge Pipeline] ❌ L'agent a échoué à fusionner et stabiliser les PR de la journée.`);
       }
 
     } catch (error) {
-        console.error(`[${project.id} - PR Merge Pipeline] ❌ Erreur critique lors de la fusion des PR :`, error);
+        console.error(`[Global PR Merge Pipeline] ❌ Erreur critique lors de la fusion des PR :`, error);
     } finally {
-        decrementTasks(project.id);
-        // 5. Unlock the project
-        unlockProject(project.id);
+        // Unlock all projects
+        for (const project of projects) {
+          unlockProject(project.id);
+        }
     }
   });
 }

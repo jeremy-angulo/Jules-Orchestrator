@@ -1,7 +1,7 @@
 import { PROJECTS } from './config.js';
 import { runBackgroundAgent } from './agents/background.js';
 import { runIssueAgent } from './agents/issueAgent.js';
-import { scheduleBuildAndMergePipeline, scheduleDailyPRMergePipeline } from './agents/pipeline.js';
+import { scheduleBuildAndMergePipeline, scheduleGlobalDailyPRMergePipeline } from './agents/pipeline.js';
 import { initProjectState } from './db/database.js';
 import app from './app.js';
 
@@ -24,6 +24,8 @@ PROJECTS.forEach(project => {
         console.error(`[${project.id}] 💥 Exception non gérée dans Issue Agent:`, err);
     });
     scheduleBuildAndMergePipeline(project);
-    scheduleDailyPRMergePipeline(project);
+
   }
 });
+
+scheduleGlobalDailyPRMergePipeline(PROJECTS);

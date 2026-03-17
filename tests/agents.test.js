@@ -82,7 +82,7 @@ test('scheduleBuildAndMergePipeline - executes callback logic', async (t) => {
   await tasks[0]();
 
   assert.strictEqual(fetchCallCount, 4, 'Should have made 4 fetch calls for a successful pipeline');
-  assert.strictEqual(db.isProjectLocked('test-pipeline-1'), false, 'Project should be unlocked after');
+  assert.strictEqual(await db.isProjectLocked('test-pipeline-1'), false, 'Project should be unlocked after');
 });
 
 test('scheduleBuildAndMergePipeline - skips PR if session fails', async (t) => {
