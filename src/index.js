@@ -1,20 +1,17 @@
-import express from 'express';
 import { PROJECTS } from './config.js';
 import { runBackgroundAgent } from './agents/background.js';
 import { runIssueAgent } from './agents/issueAgent.js';
 import { scheduleBuildAndMergePipeline } from './agents/pipeline.js';
 import { initProjectState } from './db/database.js';
+import app from './app.js';
+
 // Serveur de santé pour Render
-const app = express();
 const PORT = process.env.PORT || 3000;
-app.get('/', (req, res) => {
-    res.status(200).send('Orchestrator is alive');
-});
-app.get('/health', (req, res) => {
-    res.status(200).send('Orchestrator is alive');
-});
+
 app.listen(PORT, () => {
+    console.log(`Health server listening on port ${PORT}`);
 });
+
 PROJECTS.forEach(project => {
   if (project.githubRepo) {
     // Initialisation de l'état en base de données SQLite
