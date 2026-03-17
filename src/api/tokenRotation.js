@@ -1,5 +1,5 @@
 import { GLOBAL_CONFIG } from '../config.js';
-import { getTokenUsageToday, getAgentUsageToday, getTotalUsageToday } from '../db/database.js';
+import { getTokenUsage24h, getAgentUsage24h, getTotalUsage24h } from '../db/database.js';
 
 export class QuotaExceededError extends Error {
   constructor(message) {
@@ -11,7 +11,6 @@ export class QuotaExceededError extends Error {
 const LIMITS = {
   MAIN_TOKEN: 80,
   SECONDARY_TOKEN: 15,
-  BACKGROUND_AGENT_PER_PROMPT: 40,
   GLOBAL_RESERVED: 20
 };
 
@@ -25,7 +24,7 @@ export function getAvailableToken(agentName) {
 
   // Calculate total capacity
   const totalCapacity = LIMITS.MAIN_TOKEN + (secondaryTokens.length * LIMITS.SECONDARY_TOKEN);
-  const totalUsage = getTotalUsageToday();
+  const totalUsage = getTotalUsage24h();
   const globalRemaining = totalCapacity - totalUsage;
 
   const isBackgroundAgent = agentName.includes('Background Agent');
@@ -33,14 +32,6 @@ export function getAvailableToken(agentName) {
   // Strict check: if 20 or less calls left, reserve them exclusively for other agents
   if (isBackgroundAgent && globalRemaining <= LIMITS.GLOBAL_RESERVED) {
     throw new QuotaExceededError(`Global reserved capacity reached (${LIMITS.GLOBAL_RESERVED} calls remaining). Skipping background agent task.`);
-  }
-
-  // Fair use limits per specific agent
-  if (isBackgroundAgent) {
-    const agentUsage = getAgentUsageToday(agentName);
-    if (agentUsage >= LIMITS.BACKGROUND_AGENT_PER_PROMPT) {
-      throw new QuotaExceededError(`Agent '${agentName}' has exceeded its daily limit of ${LIMITS.BACKGROUND_AGENT_PER_PROMPT} calls.`);
-    }
   }
 
   // Token rotation logic
@@ -53,7 +44,7 @@ export function getAvailableToken(agentName) {
   let bestRatio = Infinity;
 
   for (const { token, limit } of allTokens) {
-    const usage = getTokenUsageToday(token);
+    const usage = getTokenUsage24h(token);
     if (usage < limit) {
       const ratio = usage / limit;
       if (ratio < bestRatio) {

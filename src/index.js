@@ -2,7 +2,7 @@ import express from 'express';
 import { PROJECTS } from './config.js';
 import { runBackgroundAgent } from './agents/background.js';
 import { runIssueAgent } from './agents/issueAgent.js';
-import { scheduleBuildAndMergePipeline } from './agents/pipeline.js';
+import { scheduleBuildAndMergePipeline, scheduleDailyPRMergePipeline } from './agents/pipeline.js';
 import { initProjectState } from './db/database.js';
 // Serveur de santé pour Render
 const app = express();
@@ -27,5 +27,6 @@ PROJECTS.forEach(project => {
         console.error(`[${project.id}] 💥 Exception non gérée dans Issue Agent:`, err);
     });
     scheduleBuildAndMergePipeline(project);
+    scheduleDailyPRMergePipeline(project);
   }
 });

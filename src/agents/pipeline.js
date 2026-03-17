@@ -37,3 +37,54 @@ export function scheduleBuildAndMergePipeline(project) {
     }
   });
 }
+
+export function scheduleDailyPRMergePipeline(project) {
+  // Execute daily at 17:00 PM
+  cron.schedule("0 17 * * *", async () => {
+    try {
+      console.log(`\n[${project.id} - PR Merge Pipeline] ⏰ Verrouillage du repo pour la fusion des PRs de la journée...`);
+      // 1. Lock the project
+      lockProject(project.id);
+
+      // 2. Wait up to 1 hour (3600 seconds) for existing agents to finish
+      let waited = 0;
+      const timeout = 3600;
+      while (getActiveTasks(project.id) > 0 && waited < timeout) {
+        await sleep(15000);
+        waited += 15;
+      }
+
+      if (waited >= timeout) {
+          console.log(`[${project.id} - PR Merge Pipeline] ⚠️ Timeout atteint en attendant la fin des agents. Procéder quand même...`);
+      }
+
+      console.log(`[${project.id} - PR Merge Pipeline] 🚀 Lancement de l'agent de résolution et fusion des PR.`);
+
+      const prompt = `Role : You are the Chief Release Manager & Code Integrator Agent.
+CRITICAL RULE: You are 100% autonomous. You do NOT ask for permission or wait.
+MISSION: Daily End-of-Day Pull Request Merge & CI Verification.
+STEP 1 (AUDIT PRs): Check all open Pull Requests in the repository.
+STEP 2 (MERGE & RESOLVE): For each PR, resolve any merge conflicts. If a PR is obsolete or duplicates work already done by another agent, close it with an explanation. Merge valid PRs into the main working branch (e.g., 'dev' or the configured source branch).
+STEP 3 (STABILIZE): Run 'npm install', 'npm run lint', 'npx tsc --noEmit' and 'npm run build' (or the equivalent Python/backend commands) to ensure the newly merged code compiles and builds correctly. Fix any errors autonomously.
+STEP 4 (DEPLOY TO PREVIEW): Once the main working branch is stable, merge it into the 'preview' branch.
+DO NOT STOP until the 'preview' branch is updated with the day's stable work.`;
+
+      incrementTasks(project.id);
+
+      const success = await startAndMonitorSession(prompt, "Daily PR Merge Agent", project);
+
+      if (success) {
+          console.log(`[${project.id} - PR Merge Pipeline] ✅ Fusion quotidienne des PR terminée avec succès.`);
+      } else {
+          console.log(`[${project.id} - PR Merge Pipeline] ❌ L'agent a échoué à fusionner et stabiliser les PR de la journée.`);
+      }
+
+    } catch (error) {
+        console.error(`[${project.id} - PR Merge Pipeline] ❌ Erreur critique lors de la fusion des PR :`, error);
+    } finally {
+        decrementTasks(project.id);
+        // 5. Unlock the project
+        unlockProject(project.id);
+    }
+  });
+}
