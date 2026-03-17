@@ -17,7 +17,7 @@ export async function runBackgroundAgent(project) {
     while (true) {
       try {
         // Vérification du verrouillage : Si le Pipeline quotidien se prépare, on attend.
-        if (isProjectLocked(project.id)) {
+        if (await isProjectLocked(project.id)) {
           console.log(`[${project.id}] 🛑 Background Agent ${index} en pause (Le Pipeline quotidien arrive)...`);
           await sleep(60000);
           continue;
@@ -37,20 +37,20 @@ export async function runBackgroundAgent(project) {
 
         await startAndMonitorSession(prompt, `Background Agent - ${index}`, project);
 
-        decrementTasks(project.id); // On libère la place
+        await decrementTasks(project.id); // On libère la place
 
         // Pause de 5 minutes entre chaque tâche de fond
         await sleep(300000);
       } catch (error) {
          if (error instanceof QuotaExceededError || error.name === 'QuotaExceededError') {
            console.log(`[${project.id}] 🛑 Quota exceeded for Background Agent - ${index}: ${error.message}. Sleeping for 12 hours.`);
-           decrementTasks(project.id);
+           await decrementTasks(project.id);
            await sleep(12 * 60 * 60 * 1000); // Wait for 12 hours
            continue;
          }
          console.error(`[${project.id}] ❌ Erreur critique dans la boucle background ${index} :`, error);
          // Assurer qu'on libère la place s'il y a eu une erreur et qu'on l'a incrémentée
-         decrementTasks(project.id);
+         await decrementTasks(project.id);
          // Attendre avant de réessayer pour éviter de spammer
          await sleep(60000);
       }
