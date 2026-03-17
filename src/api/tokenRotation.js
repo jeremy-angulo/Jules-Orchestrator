@@ -9,10 +9,10 @@ export class QuotaExceededError extends Error {
 }
 
 const LIMITS = {
-  MAIN_TOKEN: 80,
-  SECONDARY_TOKEN: 15,
-  BACKGROUND_AGENT_PER_PROMPT: 40,
-  GLOBAL_RESERVED: 20
+  MAIN_TOKEN: 500,
+  SECONDARY_TOKEN: 100,
+  BACKGROUND_AGENT_PER_PROMPT: 250,
+  GLOBAL_RESERVED: 50
 };
 
 export function getAvailableToken(agentName) {
