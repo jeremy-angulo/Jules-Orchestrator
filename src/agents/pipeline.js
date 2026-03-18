@@ -10,23 +10,40 @@ export function scheduleBuildAndMergePipeline(project) {
       console.log(`\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour le Build & Merge...`);
       // 1. Lever le drapeau rouge
       await lockProject(project.id);
-      // 2. Attendre que les agents en cours finissent leur travail proprement
-      while (await getActiveTasks(project.id) > 0) {
+      // 2. Attendre que les agents en cours finissent leur travail proprement (timeout 2h)
+      let waited = 0;
+      const timeout = 7200; // 2 heures en secondes
+      while (await getActiveTasks(project.id) > 0 && waited < timeout) {
         await sleep(15000);
+        waited += 15;
       }
+
+      if (waited >= timeout) {
+         console.log(`[${project.id} - Pipeline] ⚠️ Timeout de 2h atteint, on met en pause forcée et on lance le Build & Merge...`);
+      }
+
       console.log(`[${project.id} - Pipeline] 🚀 Repo libre ! Jules vérifie le build sur la branche ${project.buildAndMergePipeline.sourceBranch}.`);
       const pipeline = project.buildAndMergePipeline;
       const prompt = pipeline.prompt
         .replace(/{sourceBranch}/g, pipeline.sourceBranch)
         .replace(/{targetBranch}/g, pipeline.targetBranch);
       await incrementTasks(project.id);
-      // 3. Jules valide, nettoie et commit sur dev
-      const success = await startAndMonitorSession(prompt, "Build & Merge Agent", project);
-      // 4. Si Jules a réussi à stabiliser le build, Node.js crée la PR et la fusionne
-      if (success) {
-        await createAndMergePR(project, pipeline.sourceBranch, pipeline.targetBranch);
-      } else {
-        console.log(`[${project.id} - Pipeline] ⚠️ Jules a échoué à réparer le build. L'auto-merge est annulé par sécurité.`);
+
+      // 3. Jules valide, nettoie et commit sur dev. Relance automatique jusqu'à la réussite.
+      let success = false;
+      while (!success) {
+        success = await startAndMonitorSession(prompt, "Build & Merge Agent", project);
+        if (success) {
+          // 4. Si Jules a réussi à stabiliser le build, Node.js crée la PR et la fusionne
+          try {
+            await createAndMergePR(project, pipeline.sourceBranch, pipeline.targetBranch);
+          } catch (err) {
+            console.error(`[${project.id} - Pipeline] ⚠️ Erreur lors de la création/fusion de la PR :`, err);
+          }
+        } else {
+          console.log(`[${project.id} - Pipeline] ⚠️ Jules a échoué à réparer le build. On relance l'agent jusqu'à succès...`);
+          await sleep(30000); // Attente avant de réessayer
+        }
       }
     } catch (error) {
         console.error(`[${project.id} - Pipeline] ❌ Erreur critique lors du Build & Merge :`, error);
@@ -34,6 +51,7 @@ export function scheduleBuildAndMergePipeline(project) {
         await decrementTasks(project.id);
         // 5. Baisse du drapeau rouge, les agents de fond reprennent
         await unlockProject(project.id);
+        console.log(`[${project.id} - Pipeline] 🔓 Projet déverrouillé, les agents repartent au galop !`);
     }
   });
 }
