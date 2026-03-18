@@ -43,6 +43,7 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
         const errJson = await res.json();
         errorDetails = JSON.stringify(errJson);
       } catch (e) {
+      if (e instanceof QuotaExceededError || e.name === 'QuotaExceededError') throw e;
         errorDetails = await res.text().catch(() => '');
       }
       console.error(`[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
@@ -189,6 +190,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
         await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
       }
     } catch (e) {
+      if (e instanceof QuotaExceededError || e.name === 'QuotaExceededError') throw e;
       console.error(`[${project.id} - ${agentName}] Erreur critique lors de la surveillance (Tentative ${attempt}/${MAX_RETRIES}):`, e);
     }
     if (attempt < MAX_RETRIES) {
