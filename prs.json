@@ -1,0 +1,114 @@
+[
+  {
+    "number": 278,
+    "title": "🚀 Auto-Release: dev to preview",
+    "base": "preview",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/278"
+  },
+  {
+    "number": 276,
+    "title": "style(ui): Standardize Interactive Button Tactile Feedback",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/276"
+  },
+  {
+    "number": 273,
+    "title": "Premium Sidebar Skeleton Loading & Centralized Store Fetching",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/273"
+  },
+  {
+    "number": 270,
+    "title": "feat(ux): Add disabled cursor states and fix Download CSV loading logic",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/270"
+  },
+  {
+    "number": 264,
+    "title": "Refactor WorkflowsTab and improve button UX",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/264"
+  },
+  {
+    "number": 263,
+    "title": "UX: Active Workflow Highlighting and Smart Confirmations",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/263"
+  },
+  {
+    "number": 246,
+    "title": "Phase 12: End-to-End Autonomous Simulation and Integration Fixes",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/246"
+  },
+  {
+    "number": 245,
+    "title": "style(ui): Add aria-label to Toast Close button",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/245"
+  },
+  {
+    "number": 244,
+    "title": "feat(ux): Improved Workflow Project Management",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/244"
+  },
+  {
+    "number": 242,
+    "title": "Unsaved Changes Protection & Dirty State UI",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/242"
+  },
+  {
+    "number": 241,
+    "title": "Enhance AI Builder accessibility and premium interactions",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/241"
+  },
+  {
+    "number": 240,
+    "title": "Unsaved Changes Indicator & Logic-Syncing Safeguard",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/240"
+  },
+  {
+    "number": 239,
+    "title": "Refactor Monolithic Components and Implement QoL UX Improvements",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/239"
+  },
+  {
+    "number": 235,
+    "title": "Workflow Lifecycle & Naming Polish",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/235"
+  },
+  {
+    "number": 231,
+    "title": "Premium Workflows Tab & A11y Refinement",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/231"
+  },
+  {
+    "number": 230,
+    "title": "Frontend Refactoring & UX Micro-Improvements: Empty Canvas and Run History Feedback",
+    "base": "dev",
+    "mergeable_state": "unknown",
+    "url": "https://api.github.com/repos/jeremy-angulo/TrefleAI_IHM/pulls/230"
+  }
+]
