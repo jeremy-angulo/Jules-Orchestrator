@@ -1,3 +1,4 @@
+import { sleep } from '../utils/helpers.js';
 export async function getNextGitHubIssue(project) {
   try {
     const res = await fetch(`https://api.github.com/repos/${project.githubRepo}/issues?state=open&sort=created&direction=asc`, {
@@ -61,48 +62,64 @@ export async function createAndMergePR(project, sourceBranch, targetBranch) {
     }
     const pr = await createRes.json();
     console.log(`[${project.id} - Pipeline] ✅ PR #${pr.number} créée avec succès. Auto-Merge en cours...`);
-    // Étape B : Fusionner la PR automatiquement
-    const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${pr.number}/merge`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': `Bearer ${project.githubToken}`,
-        'Accept': 'application/vnd.github.v3+json',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ merge_method: 'merge' })
-    });
-    if (mergeRes.ok) {
-      console.log(`[${project.id} - Pipeline] 🟢 SUCCÈS : PR #${pr.number} fusionnée sur ${targetBranch} !`);
-    } else {
-      console.error(`[${project.id} - Pipeline] 🔴 ÉCHEC de l'auto-merge de la PR #${pr.number}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
-    }
+    // Étape B : Déléguer à checkAndMergePR pour polling du mergeable_state
+    await checkAndMergePR(project, pr.number);
   } catch (error) {
     console.error(`[${project.id} - Pipeline] Erreur critique lors de la gestion de la PR :`, error);
   }
 }
 export async function checkAndMergePR(project, prNumber) {
   try {
-    // 1. Récupérer les détails de la PR
-    const getRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}`, {
-      headers: {
-        'Authorization': `Bearer ${project.githubToken}`,
-        'Accept': 'application/vnd.github.v3+json'
+    let pr = null;
+    let mergeable = null;
+    let retries = 0;
+    const maxRetries = 5;
+
+    // 1. Polling loop to wait for mergeable state
+    while (retries < maxRetries) {
+      const getRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}`, {
+        headers: {
+          'Authorization': `Bearer ${project.githubToken}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (!getRes.ok) {
+        console.error(`[${project.id} - PR] ❌ Erreur API GitHub lors de la récupération de la PR #${prNumber}: ${getRes.status} ${getRes.statusText}`);
+        return;
       }
-    });
-    if (!getRes.ok) {
-      console.error(`[${project.id} - PR] ❌ Erreur API GitHub lors de la récupération de la PR #${prNumber}: ${getRes.status} ${getRes.statusText}`);
-      return;
+      pr = await getRes.json();
+
+      if (pr.merged) {
+         console.log(`[${project.id} - PR] ℹ️ PR #${prNumber} est déjà fusionnée.`);
+         return;
+      }
+      if (pr.title && pr.title.toLowerCase().includes('bump')) {
+         return;
+      }
+
+      mergeable = pr.mergeable;
+
+      // If mergeable is true or false, we can stop polling.
+      if (mergeable !== null) {
+        break;
+      }
+
+      console.log(`[${project.id} - PR] ⏳ PR #${prNumber} 'mergeable' est en cours d'évaluation par GitHub... Attente 15s (${retries+1}/${maxRetries})`);
+      await sleep(15000);
+      retries++;
     }
-    const pr = await getRes.json();
-    // 2. Vérifier si elle est déjà mergée
-    if (pr.merged) {
-      return;
+
+    if (mergeable === null) {
+       console.log(`[${project.id} - PR] ⚠️ Impossible de déterminer si la PR #${prNumber} est mergeable après plusieurs tentatives. On passe.`);
+       return;
     }
-    // 3. Vérifier le titre (pas de "bump")
-    if (pr.title.toLowerCase().includes('bump')) {
-      return;
+
+    if (mergeable === false || pr.mergeable_state === 'blocked') {
+       console.log(`[${project.id} - PR] ⚠️ PR #${prNumber} ne peut pas être mergée. État: ${pr.mergeable_state}. Vérifiez les conflits ou les checks CI.`);
+       return;
     }
-    // 4. Si non mergée et pas de "bump", on merge
+
+    // 2. Si mergeable et prête, on merge
     const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/merge`, {
       method: 'PUT',
       headers: {
@@ -144,20 +161,8 @@ export async function mergeOpenPRs(project) {
       if (pr.title && pr.title.toLowerCase().includes('bump')) {
         continue;
       }
-      const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${pr.number}/merge`, {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${project.githubToken}`,
-          'Accept': 'application/vnd.github.v3+json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ merge_method: 'merge' })
-      });
-      if (mergeRes.ok) {
-        console.log(`[${project.id} - PR] 🟢 SUCCÈS : PR #${pr.number} fusionnée automatiquement !`);
-      } else {
-        console.error(`[${project.id} - PR] 🔴 ÉCHEC de l'auto-merge de la PR #${pr.number}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
-      }
+      // Delegate to checkAndMergePR which handles polling and safety checks
+      await checkAndMergePR(project, pr.number);
     }
   } catch (error) {
     console.error(`[${project.id} - PR] Erreur critique lors de mergeOpenPRs :`, error);

@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
-import { createAndMergePR } from '../api/githubClient.js';
+import { createAndMergePR, mergeOpenPRs } from '../api/githubClient.js';
 import { lockProject, unlockProject, incrementTasks, decrementTasks, getActiveTasks } from '../db/database.js';
 export function scheduleBuildAndMergePipeline(project) {
   if (!project.buildAndMergePipeline) return;
@@ -124,6 +124,23 @@ DO NOT STOP until the 'preview' branch is updated with the day's stable work acr
         for (const project of projects) {
           unlockProject(project.id);
         }
+    }
+  });
+}
+
+export function scheduleAutoMergeService(projects) {
+  // Execute every 5 minutes
+  cron.schedule("*/5 * * * *", async () => {
+    try {
+      console.log(`\n[Auto-Merge Service] ⏰ Lancement de la vérification des PRs en attente...`);
+      for (const project of projects) {
+         if (!project.githubRepo) continue;
+         // Prevent flooding APIs
+         await sleep(2000);
+         await mergeOpenPRs(project);
+      }
+    } catch (error) {
+      console.error(`[Auto-Merge Service] ❌ Erreur critique :`, error);
     }
   });
 }

@@ -174,7 +174,7 @@ export async function startAndMonitorSession(instruction, agentName, project) {
               if (match) {
                   const prNumber = match[1];
                   // Planifier la vérification et le merge après 3 minutes
-                  setTimeout(() => checkAndMergePR(project, prNumber), 180000);
+                  // setTimeout(() => checkAndMergePR(project, prNumber), 180000); // Managed by scheduleAutoMergeService
               }
           }
           if (!hasPR) {
