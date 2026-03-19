@@ -1,7 +1,7 @@
 import { PROJECTS } from './config.js';
 import { runBackgroundAgent } from './agents/background.js';
 import { runIssueAgent } from './agents/issueAgent.js';
-import { scheduleBuildAndMergePipeline, scheduleGlobalDailyPRMergePipeline } from './agents/pipeline.js';
+import { scheduleBuildAndMergePipeline, scheduleGlobalDailyPRMergePipeline, scheduleAutoMergeService } from './agents/pipeline.js';
 import { initProjectState } from './db/database.js';
 import app from './app.js';
 
@@ -29,3 +29,4 @@ PROJECTS.forEach(project => {
 });
 
 scheduleGlobalDailyPRMergePipeline(PROJECTS);
+scheduleAutoMergeService(PROJECTS);
