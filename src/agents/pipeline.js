@@ -31,7 +31,15 @@ export function scheduleBuildAndMergePipeline(project) {
 
       // 3. Jules valide, nettoie et commit sur dev. Relance automatique jusqu'à la réussite.
       let success = false;
+      const pipelineStartTime = Date.now();
+      const PIPELINE_TIMEOUT_MS = 3 * 60 * 60 * 1000; // 3 heures
+
       while (!success) {
+        if (Date.now() - pipelineStartTime >= PIPELINE_TIMEOUT_MS) {
+            console.log(`[${project.id} - Pipeline] ⚠️ Timeout global du pipeline atteint (3h). Arrêt des tentatives pour débloquer les agents.`);
+            break;
+        }
+
         success = await startAndMonitorSession(prompt, "Build & Merge Agent", project);
         if (success) {
           // 4. Si Jules a réussi à stabiliser le build, Node.js crée la PR et la fusionne
@@ -49,6 +57,15 @@ export function scheduleBuildAndMergePipeline(project) {
         console.error(`[${project.id} - Pipeline] ❌ Erreur critique lors du Build & Merge :`, error);
     } finally {
         await decrementTasks(project.id);
+
+        // Nettoyage de sécurité: si le compteur de tâches est bloqué > 0, on le force à 0
+        let currentTasks = await getActiveTasks(project.id);
+        while (currentTasks > 0) {
+            console.log(`[${project.id} - Pipeline] ⚠️ Nettoyage d'une tâche fantôme...`);
+            await decrementTasks(project.id);
+            currentTasks = await getActiveTasks(project.id);
+        }
+
         // 5. Baisse du drapeau rouge, les agents de fond reprennent
         await unlockProject(project.id);
         console.log(`[${project.id} - Pipeline] 🔓 Projet déverrouillé, les agents repartent au galop !`);
