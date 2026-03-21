@@ -1,18 +1,5 @@
 import { GLOBAL_CONFIG } from '../config.js';
-import { getTokenUsage24h, getAgentUsage24h, getTotalUsage24h } from '../db/database.js';
-
-export class QuotaExceededError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'QuotaExceededError';
-  }
-}
-
-const LIMITS = {
-  MAIN_TOKEN: 80,
-  SECONDARY_TOKEN: 15,
-  GLOBAL_RESERVED: 20
-};
+import { getTokenUsage24h } from '../db/database.js';
 
 export function getAvailableToken(agentName) {
   const mainToken = GLOBAL_CONFIG.JULES_MAIN_TOKEN;
@@ -22,41 +9,19 @@ export function getAvailableToken(agentName) {
     throw new Error("JULES_MAIN_TOKEN is not configured.");
   }
 
-  // Calculate total capacity
-  const totalCapacity = LIMITS.MAIN_TOKEN + (secondaryTokens.length * LIMITS.SECONDARY_TOKEN);
-  const totalUsage = getTotalUsage24h();
-  const globalRemaining = totalCapacity - totalUsage;
+  // Token rotation logic without limits
+  const allTokens = [mainToken, ...secondaryTokens];
 
-  const isBackgroundAgent = agentName.includes('Background Agent');
+  let bestToken = mainToken;
+  let minUsage = Infinity;
 
-  // Strict check: if 20 or less calls left, reserve them exclusively for other agents
-  if (isBackgroundAgent && globalRemaining <= LIMITS.GLOBAL_RESERVED) {
-    throw new QuotaExceededError(`Global reserved capacity reached (${LIMITS.GLOBAL_RESERVED} calls remaining). Skipping background agent task.`);
-  }
-
-  // Token rotation logic
-  const allTokens = [
-    { token: mainToken, limit: LIMITS.MAIN_TOKEN },
-    ...secondaryTokens.map(t => ({ token: t, limit: LIMITS.SECONDARY_TOKEN }))
-  ];
-
-  let bestToken = null;
-  let bestRatio = Infinity;
-
-  for (const { token, limit } of allTokens) {
+  for (const token of allTokens) {
     const usage = getTokenUsage24h(token);
-    if (usage < limit) {
-      const ratio = usage / limit;
-      if (ratio < bestRatio) {
-        bestRatio = ratio;
-        bestToken = token;
-      }
+    if (usage < minUsage) {
+      minUsage = usage;
+      bestToken = token;
     }
   }
 
-  if (bestToken) {
-    return bestToken;
-  }
-
-  throw new QuotaExceededError('All available tokens have exhausted their daily quota.');
+  return bestToken;
 }
