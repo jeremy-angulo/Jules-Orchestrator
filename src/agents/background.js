@@ -1,7 +1,6 @@
 import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
 import { isProjectLocked, incrementTasks, decrementTasks } from '../db/database.js';
-import { QuotaExceededError } from '../api/tokenRotation.js';
 
 export async function runBackgroundAgent(project) {
   if (!project.backgroundPrompts || project.backgroundPrompts.length === 0) {
@@ -32,12 +31,6 @@ export async function runBackgroundAgent(project) {
         // Pause de 5 minutes entre chaque tâche de fond
         await sleep(300000);
       } catch (error) {
-         if (error instanceof QuotaExceededError || error.name === 'QuotaExceededError') {
-           console.log(`[${project.id}] 🛑 Quota exceeded for Background Agent - ${index}: ${error.message}. Sleeping for 12 hours.`);
-           await decrementTasks(project.id);
-           await sleep(12 * 60 * 60 * 1000); // Wait for 12 hours
-           continue;
-         }
          console.error(`[${project.id}] ❌ Erreur critique dans la boucle background ${index} :`, error);
          // Assurer qu'on libère la place s'il y a eu une erreur et qu'on l'a incrémentée
          await decrementTasks(project.id);

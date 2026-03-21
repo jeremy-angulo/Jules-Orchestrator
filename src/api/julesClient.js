@@ -1,7 +1,7 @@
 import { GLOBAL_CONFIG } from '../config.js';
 import { sleep } from '../utils/helpers.js';
 import { checkAndMergePR } from './githubClient.js';
-import { getAvailableToken, QuotaExceededError } from './tokenRotation.js';
+import { getAvailableToken } from './tokenRotation.js';
 import { recordApiCall } from '../db/database.js';
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 /**
@@ -43,7 +43,6 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
         const errJson = await res.json();
         errorDetails = JSON.stringify(errJson);
       } catch (e) {
-      if (e instanceof QuotaExceededError || e.name === 'QuotaExceededError') throw e;
         errorDetails = await res.text().catch(() => '');
       }
       console.error(`[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
@@ -190,7 +189,6 @@ export async function startAndMonitorSession(instruction, agentName, project) {
         await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
       }
     } catch (e) {
-      if (e instanceof QuotaExceededError || e.name === 'QuotaExceededError') throw e;
       console.error(`[${project.id} - ${agentName}] Erreur critique lors de la surveillance (Tentative ${attempt}/${MAX_RETRIES}):`, e);
     }
     if (attempt < MAX_RETRIES) {
