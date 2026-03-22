@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "ag-grid-community/styles/ag-grid.css";
+@import "ag-grid-community/styles/ag-theme-alpine.css";
+
+@theme {
+  --color-primary-500: #3b82f6;
+}
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}

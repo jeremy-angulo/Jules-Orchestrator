@@ -1,0 +1,100 @@
+name: Jules Auto-merge
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Stop if Dependabot
+        if: startsWith(github.actor, 'dependabot')
+        run: |
+          echo "PR created by Dependabot. Stopping workflow."
+          exit 0
+
+      - name: Checkout repository
+        if: github.actor == 'google-labs-jules[bot]'
+        uses: actions/checkout@v4
+
+      - name: Check for major react/next updates
+        if: github.actor == 'google-labs-jules[bot]'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cat << 'EOF' > check_major.py
+          import os
+          import sys
+          import re
+          import subprocess
+
+          pr_title = os.environ.get('PR_TITLE', '').lower()
+          pr_number = os.environ.get('PR_NUMBER')
+
+          # Check PR Title
+          for pkg in ['react', 'next']:
+              if pkg in pr_title:
+                  if 'major' in pr_title:
+                      print(f"::error::Major update for {pkg} detected in PR title.")
+                      sys.exit(1)
+                  # e.g., bump react from 17.0.2 to 18.2.0
+                  # regex to find from <v_old> to <v_new>
+                  match = re.search(r'(?:from|v)?\s*(\d+)\.\d+\.\d+\s+(?:to|->)\s+(?:v)?\s*(\d+)\.\d+\.\d+', pr_title)
+                  if match and int(match.group(2)) > int(match.group(1)):
+                      print(f"::error::Major update for {pkg} detected in PR title.")
+                      sys.exit(1)
+
+                  # simpler bump: v17 to v18
+                  match2 = re.search(r'v?(\d+)[^\s]*\s+(to|->)\s+v?(\d+)', pr_title)
+                  if match2 and int(match2.group(3)) > int(match2.group(1)):
+                      print(f"::error::Major update for {pkg} detected in PR title.")
+                      sys.exit(1)
+
+          # Fetch PR diff
+          try:
+              diff = subprocess.check_output(['gh', 'pr', 'diff', str(pr_number)], text=True)
+          except Exception as e:
+              print(f"::error::Failed to fetch diff: {e}")
+              sys.exit(1)
+
+          # Look for dependency version changes
+          old_versions = {}
+          new_versions = {}
+
+          for line in diff.split('\n'):
+              # Looking for lines like: - "react": "^17.0.2",
+              #                      or + "react": "^18.2.0",
+              if line.startswith('-') and not line.startswith('---'):
+                  match = re.search(r'"(react|next)"\s*:\s*"[^\d]*(\d+)\.', line)
+                  if match:
+                      old_versions[match.group(1)] = int(match.group(2))
+              elif line.startswith('+') and not line.startswith('+++'):
+                  match = re.search(r'"(react|next)"\s*:\s*"[^\d]*(\d+)\.', line)
+                  if match:
+                      new_versions[match.group(1)] = int(match.group(2))
+
+          for pkg in ['react', 'next']:
+              if pkg in old_versions and pkg in new_versions:
+                  if new_versions[pkg] > old_versions[pkg]:
+                      print(f"::error::Major update for {pkg} detected in diff.")
+                      sys.exit(1)
+
+          print("No major update to react or next detected.")
+          EOF
+          python3 check_major.py
+
+      - name: Auto-approve and merge
+        if: github.actor == 'google-labs-jules[bot]'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr review --approve "$PR_URL"
+          gh pr merge --auto --squash "$PR_URL"

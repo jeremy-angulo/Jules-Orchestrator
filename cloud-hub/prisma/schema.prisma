@@ -1,0 +1,76 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String   @id @default(uuid())
+  email               String   @unique
+  passwordHash        String
+  role                String   // ADMIN or FREELANCE
+  isActive            Boolean  @default(true)
+  monthlyBudgetLimit  Float    @default(0.0)
+  currentMonthSpend   Float    @default(0.0)
+}
+
+model GlobalSettings {
+  id                  String   @id @default(uuid())
+  dataRetentionDays   Int      @default(30)
+  defaultBudgetLimit  Float    @default(50.0)
+}
+
+model ApiVault {
+  id            String   @id @default(uuid())
+  providerName  String   @unique // OpenAI, Exa, Apify, PeopleDataLabs, Fullenrich, Firecrawl
+  encryptedKey  String
+  updatedAt     DateTime @updatedAt
+}
+
+model PipelineTemplate {
+  id            String   @id @default(uuid())
+  name          String
+  category      String
+  description   String
+  nodeGraphState Json
+  createdById   String
+}
+
+model Project {
+  id            String   @id @default(uuid())
+  name          String
+  freelancerId  String
+  totalCost     Float    @default(0.0)
+  status        String   // PENDING, RUNNING, SUCCESS, FAILED
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  pipelineSync  PipelineSync?
+}
+
+model PipelineSync {
+  id              String   @id @default(uuid())
+  projectId       String   @unique
+  latestCsvState  Json
+  nodeGraphState  Json
+  project         Project  @relation(fields: [projectId], references: [id])
+}
+
+model ExecutionTelemetry {
+  id             String   @id @default(uuid())
+  projectId      String
+  freelancerId   String
+  blockType      String
+  actionName     String
+  status         String   // SUCCESS, ERROR
+  errorCategory  String?
+  errorMessage   String?
+  durationMs     Int
+  costAmount     Float
+  rowsProcessed  Int
+}
