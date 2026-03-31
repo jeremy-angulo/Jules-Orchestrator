@@ -151,25 +151,31 @@ test('createAndMergePR - handles PR creation JSON error', async (t) => {
   assert.strictEqual(fetchMock.mock.calls.length, 1);
 });
 
-test('createAndMergePR - handles auto-merge failure gracefully', async (t) => {
+test('createAndMergePR - handles auto-merge failure gracefully and fallbacks to squash', async (t) => {
   const fetchMock = t.mock.method(globalThis, 'fetch', async (url) => {
     if (url.endsWith('/pulls')) {
       return {
         ok: true,
         json: async () => ({ number: 456 })
       };
+    } else if (url.endsWith('/pulls/456')) {
+      return {
+        ok: true,
+        json: async () => ({ number: 456, merged: false, mergeable: true, mergeable_state: 'clean' })
+      };
     } else if (url.endsWith('/pulls/456/merge')) {
       return {
         ok: false,
         status: 405,
-        statusText: 'Method Not Allowed'
+        statusText: 'Method Not Allowed',
+        text: async () => 'Error message'
       };
     }
     throw new Error('Unexpected URL: ' + url);
   });
 
   await createAndMergePR(mockProject, 'dev', 'main');
-  assert.strictEqual(fetchMock.mock.calls.length, 2);
+  assert.strictEqual(fetchMock.mock.calls.length, 4); // PR creation, PR polling, merge attempt, squash attempt
 });
 
 test('closeGitHubIssue - success (asserts fetch parameters)', async (t) => {
