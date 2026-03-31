@@ -115,12 +115,12 @@ export async function checkAndMergePR(project, prNumber) {
     }
 
     if (mergeable === false || pr.mergeable_state === 'blocked') {
-       console.log(`[${project.id} - PR] ⚠️ PR #${prNumber} ne peut pas être mergée. État: ${pr.mergeable_state}. Vérifiez les conflits ou les checks CI.`);
+       console.log(`[${project.id} - PR] ⚠️ PR #${prNumber} ne peut pas être mergée. État: ${pr.mergeable_state}. Cela peut être dû à des règles de protection de branche (ex: reviews requises manquantes, checks CI en échec ou en cours, etc).`);
        return;
     }
 
     // 2. Si mergeable et prête, on merge
-    const mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/merge`, {
+    let mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/merge`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${project.githubToken}`,
@@ -129,12 +129,27 @@ export async function checkAndMergePR(project, prNumber) {
       },
       body: JSON.stringify({ merge_method: 'merge' })
     });
+
+    if (!mergeRes.ok && mergeRes.status === 405) {
+      console.log(`[${project.id} - PR] ⚠️ La méthode 'merge' classique n'est pas autorisée (405). Tentative avec 'squash'...`);
+      mergeRes = await fetch(`https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/merge`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${project.githubToken}`,
+          'Accept': 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ merge_method: 'squash' })
+      });
+    }
+
     if (mergeRes.ok) {
       console.log(`[${project.id} - PR] 🟢 SUCCÈS : PR #${prNumber} fusionnée automatiquement !`);
     } else {
       console.error(`[${project.id} - PR] 🔴 ÉCHEC de l'auto-merge de la PR #${prNumber}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
-      const errText = await mergeRes.text();
-      console.error(`Détails: ${errText}`);
+      let errText = '';
+      try { errText = await mergeRes.text(); } catch(e) {}
+      if (errText) console.error(`Détails: ${errText}`);
     }
   } catch (error) {
     console.error(`[${project.id} - PR] Erreur critique lors de checkAndMergePR :`, error);
