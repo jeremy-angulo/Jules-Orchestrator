@@ -172,13 +172,15 @@ export async function mergeOpenPRs(project) {
     if (prs.length === 0) {
       return;
     }
-    for (const pr of prs) {
+
+    // Parallelize PR merging to improve performance
+    await Promise.all(prs.map(async (pr) => {
       if (pr.title && pr.title.toLowerCase().includes('bump')) {
-        continue;
+        return;
       }
       // Delegate to checkAndMergePR which handles polling and safety checks
       await checkAndMergePR(project, pr.number);
-    }
+    }));
   } catch (error) {
     console.error(`[${project.id} - PR] Erreur critique lors de mergeOpenPRs :`, error);
   }
