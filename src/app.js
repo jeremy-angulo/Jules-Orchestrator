@@ -45,14 +45,59 @@ export const strictCors = (req, res, next) => {
     next();
 };
 
+const rateLimitMap = new Map();
+// Simple cleanup for the rateLimitMap every 10 minutes to prevent memory leaks.
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, data] of rateLimitMap.entries()) {
+        if (now - data.firstRequest > 60 * 1000) {
+            rateLimitMap.delete(ip);
+        }
+    }
+}, 10 * 60 * 1000).unref();
+
+/**
+ * Simple in-memory rate limiter middleware.
+ * Limits requests per IP within a 1-minute window.
+ */
+export const rateLimiter = (req, res, next) => {
+    const ip = req.ip || req.get('x-forwarded-for') || req.connection.remoteAddress;
+    const now = Date.now();
+    const windowMs = 60 * 1000;
+    const limit = 5;
+
+    if (!rateLimitMap.has(ip)) {
+        rateLimitMap.set(ip, { count: 1, firstRequest: now });
+        return next();
+    }
+
+    const userData = rateLimitMap.get(ip);
+    const msSinceFirst = now - userData.firstRequest;
+
+    if (msSinceFirst > windowMs) {
+        // Window expired, reset
+        rateLimitMap.set(ip, { count: 1, firstRequest: now });
+        return next();
+    }
+
+    if (userData.count >= limit) {
+        const retryAfter = Math.ceil((windowMs - msSinceFirst) / 1000);
+        res.setHeader('Retry-After', retryAfter);
+        return res.status(429).send('Too many requests, please try again later.');
+    }
+
+    userData.count++;
+    next();
+};
+
 app.use(securityHeaders);
 app.use(strictCors);
 
-app.get('/', (req, res) => {
+app.get('/', rateLimiter, (req, res) => {
     res.status(200).send('Orchestrator is alive');
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', rateLimiter, (req, res) => {
     res.status(200).send('Orchestrator is alive');
 });
 
