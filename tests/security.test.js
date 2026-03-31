@@ -3,24 +3,29 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-test('Manual verification of src/app.js middleware logic', (t) => {
-    // Since we cannot import src/app.js due to missing node_modules/express,
-    // and we cannot use esmock for the same reason,
-    // we will parse the file content to extract the middleware logic and eval it for testing.
+test('Manual verification of src/app.js middleware logic', async (t) => {
+    // Since we cannot easily import src/app.js due to missing/broken node_modules,
+    // and esmock also seems unavailable or broken in this environment,
+    // we use a slightly more robust way to extract and test the middleware.
+    // We will extract the functions and their surrounding context.
 
     const appJsContent = readFileSync(join(process.cwd(), 'src/app.js'), 'utf8');
 
-    // Extract securityHeaders function
-    const securityHeadersMatch = appJsContent.match(/export const securityHeaders = \(req, res, next\) => \{([\s\S]*?)\};/);
-    if (!securityHeadersMatch) throw new Error('Could not find securityHeaders in src/app.js');
-    const securityHeadersLogic = securityHeadersMatch[1];
-    const securityHeaders = new Function('req', 'res', 'next', securityHeadersLogic);
+    const extractFunction = (name) => {
+        const regex = new RegExp(`export const ${name} = \\(req, res, next\\) => \\{([\\s\\S]*?)\\};`);
+        const match = appJsContent.match(regex);
+        if (!match) throw new Error(`Could not find ${name} in src/app.js`);
+        return new Function('req', 'res', 'next', match[1]);
+    };
 
-    // Extract strictCors function
-    const strictCorsMatch = appJsContent.match(/export const strictCors = \(req, res, next\) => \{([\s\S]*?)\};/);
-    if (!strictCorsMatch) throw new Error('Could not find strictCors in src/app.js');
-    const strictCorsLogic = strictCorsMatch[1];
-    const strictCors = new Function('req', 'res', 'next', strictCorsLogic);
+    const securityHeaders = extractFunction('securityHeaders');
+    const strictCors = extractFunction('strictCors');
+
+    // For rateLimiter, we need the rateLimitMap state
+    const rateLimiterMatch = appJsContent.match(/export const rateLimiter = \(req, res, next\) => \{([\s\S]*?)\};/);
+    if (!rateLimiterMatch) throw new Error('Could not find rateLimiter in src/app.js');
+    const rateLimiterFactory = new Function('return (() => { const rateLimitMap = new Map(); return (req, res, next) => {' + rateLimiterMatch[1] + '}; })()');
+    const rateLimiter = rateLimiterFactory();
 
     // Test Security Headers
     const headers = {};
@@ -29,7 +34,7 @@ test('Manual verification of src/app.js middleware logic', (t) => {
             headers[name.toLowerCase()] = value;
         }
     };
-    const req = { method: 'GET' };
+    const req = { method: 'GET', get: () => null };
     let nextCalled = false;
     const next = () => { nextCalled = true; };
 
@@ -65,6 +70,45 @@ test('Manual verification of src/app.js middleware logic', (t) => {
     assert.strictEqual(nextCalled, false);
     assert.strictEqual(corsRes.statusCode, 403);
     assert.strictEqual(corsRes.ended, true);
+
+    // Test Rate Limiter
+    const ip = '127.0.0.1';
+    const rateReq = { ip, get: () => null };
+    let nextCalledCount = 0;
+    const rateNext = () => { nextCalledCount++; };
+    let lastStatusCode = null;
+    let lastBody = null;
+    let lastHeaders = {};
+    const rateRes = {
+        setHeader: (name, value) => { lastHeaders[name] = value; },
+        status: (code) => {
+            lastStatusCode = code;
+            return {
+                send: (body) => { lastBody = body; }
+            };
+        }
+    };
+
+    // Test successful requests within limit
+    for (let i = 0; i < 5; i++) {
+        rateLimiter(rateReq, rateRes, rateNext);
+    }
+    assert.strictEqual(nextCalledCount, 5);
+    assert.strictEqual(lastStatusCode, null);
+
+    // Test request exceeding limit
+    rateLimiter(rateReq, rateRes, rateNext);
+    assert.strictEqual(nextCalledCount, 5);
+    assert.strictEqual(lastStatusCode, 429);
+    assert.strictEqual(lastBody, 'Too many requests, please try again later.');
+    assert.ok(lastHeaders['Retry-After'] !== undefined);
+
+    // Test different IP is not affected
+    nextCalledCount = 0;
+    lastStatusCode = null;
+    rateLimiter({ ip: '127.0.0.2', get: () => null }, rateRes, rateNext);
+    assert.strictEqual(nextCalledCount, 1);
+    assert.strictEqual(lastStatusCode, null);
 });
 
 test('src/app.js disables x-powered-by', (t) => {
