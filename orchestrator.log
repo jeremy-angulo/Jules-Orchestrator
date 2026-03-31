@@ -1,0 +1,31 @@
+PRAGMA journal_mode = WAL
+CREATE TABLE IF NOT EXISTS project_states (
+    project_id TEXT PRIMARY KEY,
+    is_locked_for_daily BOOLEAN DEFAULT 0,
+    active_tasks INTEGER DEFAULT 0
+  )
+
+🚀 Démarrage du Super-Orchestrateur Multi-Projets...
+INSERT OR IGNORE INTO project_states (project_id) VALUES ('HomeFreeWord')
+⚙️  Initialisation du projet : HomeFreeWord
+SELECT * FROM project_states WHERE project_id = 'HomeFreeWord'
+UPDATE project_states SET active_tasks = active_tasks + 1 WHERE project_id = 'HomeFreeWord'
+
+[HomeFreeWord - Background Agent] 🟢 Lancement de la session Jules...
+SELECT * FROM project_states WHERE project_id = 'HomeFreeWord'
+[HomeFreeWord] 🗓️ Pipeline planifié avec le cron : 0 5 * * *
+INSERT OR IGNORE INTO project_states (project_id) VALUES ('Trefle-ai-IHM')
+⚙️  Initialisation du projet : Trefle-ai-IHM
+[Trefle-ai-IHM] ℹ️ Aucun prompt background configuré pour ce projet.
+SELECT * FROM project_states WHERE project_id = 'Trefle-ai-IHM'
+[Trefle-ai-IHM] 🗓️ Pipeline planifié avec le cron : 0 5 * * *
+🌐 Serveur de santé démarré sur le port 3000
+[julesAPI] Error API: 401 Unauthorized
+[HomeFreeWord - Background Agent] ❌ Erreur de création de session.
+UPDATE project_states SET active_tasks = MAX(0, active_tasks - 1) WHERE project_id = 'HomeFreeWord'
+[Trefle-ai-IHM - GitHub] API Error fetching issues: 401 Unauthorized
+[HomeFreeWord - GitHub] API Error fetching issues: 401 Unauthorized
+SELECT * FROM project_states WHERE project_id = 'Trefle-ai-IHM'
+SELECT * FROM project_states WHERE project_id = 'HomeFreeWord'
+[Trefle-ai-IHM - GitHub] API Error fetching issues: 401 Unauthorized
+[HomeFreeWord - GitHub] API Error fetching issues: 401 Unauthorized
