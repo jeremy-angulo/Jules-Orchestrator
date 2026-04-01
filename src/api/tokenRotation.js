@@ -2,11 +2,11 @@ import { GLOBAL_CONFIG } from '../config.js';
 import { getTokenUsage24h } from '../db/database.js';
 
 export function getAvailableToken(agentName) {
-  const mainToken = GLOBAL_CONFIG.JULES_MAIN_TOKEN;
+  const mainToken = GLOBAL_CONFIG.JULES_API_TOKEN;
   const secondaryTokens = GLOBAL_CONFIG.JULES_SECONDARY_TOKENS;
 
   if (!mainToken) {
-    throw new Error("JULES_MAIN_TOKEN is not configured.");
+    throw new Error("JULES_API_TOKEN is not configured.");
   }
 
   // Token rotation logic without limits

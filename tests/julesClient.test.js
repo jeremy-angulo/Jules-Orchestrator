@@ -5,7 +5,7 @@ import { GLOBAL_CONFIG } from '../src/config.js';
 import Database from 'better-sqlite3';
 const db = new Database('orchestrator.db');
 
-GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
+GLOBAL_CONFIG.JULES_API_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 
 const mockProject = {

@@ -1,6 +1,6 @@
 // Configuration globale de l'API
 export const GLOBAL_CONFIG = {
-  JULES_MAIN_TOKEN: process.env.JULES_MAIN_TOKEN,
+  JULES_API_TOKEN: process.env.JULES_API_TOKEN,
   JULES_SECONDARY_TOKENS: process.env.JULES_SECONDARY_TOKENS ? process.env.JULES_SECONDARY_TOKENS.split(',').map(t => t.trim()) : [],
   POLLING_INTERVAL: 15000, // Vérifie l'état de Jules toutes les 15 secondes
 };
