@@ -7,7 +7,7 @@ const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 /**
  * Base API client for Jules REST API
  */
-export async function julesAPI(agentName, endpoint, method = 'GET', body = null, queryParams = null) {
+export async function julesAPI(agentName, endpoint, method = 'GET', body = null, queryParams = null, requestOptions = {}) {
   let url = `${JULES_API_BASE}${endpoint}`;
   if (queryParams) {
     const params = new URLSearchParams();
@@ -22,7 +22,7 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     }
   }
   // Use dynamic token logic via tokenRotation.js
-  const token = getAvailableToken(agentName);
+  const token = getAvailableToken(agentName, requestOptions);
   // Track usage for sessions creation / messages
   if (method === 'POST' && (endpoint === '/sessions' || endpoint.includes(':sendMessage'))) {
     recordApiCall(token, agentName);
@@ -69,7 +69,7 @@ export async function getSource(agentName, sourceId) {
 // ==========================================
 // SESSIONS METHODS
 // ==========================================
-export async function createSession(agentName, prompt, title, sourceId, startingBranch, automationMode) {
+export async function createSession(agentName, prompt, title, sourceId, startingBranch, automationMode, requestOptions = {}) {
   const body = {
     prompt,
     title,
@@ -83,23 +83,23 @@ export async function createSession(agentName, prompt, title, sourceId, starting
   if (automationMode) {
     body.automationMode = automationMode;
   }
-  return julesAPI(agentName, '/sessions', 'POST', body);
+  return julesAPI(agentName, '/sessions', 'POST', body, null, requestOptions);
 }
-export async function getSession(agentName, sessionId) {
+export async function getSession(agentName, sessionId, requestOptions = {}) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(agentName, `/${safeId}`);
+  return julesAPI(agentName, `/${safeId}`, 'GET', null, null, requestOptions);
 }
-export async function deleteSession(agentName, sessionId) {
+export async function deleteSession(agentName, sessionId, requestOptions = {}) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(agentName, `/${safeId}`, 'DELETE');
+  return julesAPI(agentName, `/${safeId}`, 'DELETE', null, null, requestOptions);
 }
-export async function sendMessage(agentName, sessionId, message) {
+export async function sendMessage(agentName, sessionId, message, requestOptions = {}) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(agentName, `/${safeId}:sendMessage`, 'POST', { prompt: message });
+  return julesAPI(agentName, `/${safeId}:sendMessage`, 'POST', { prompt: message }, null, requestOptions);
 }
-export async function approvePlan(agentName, sessionId) {
+export async function approvePlan(agentName, sessionId, requestOptions = {}) {
   const safeId = sessionId.startsWith('sessions/') ? sessionId : `sessions/${sessionId}`;
-  return julesAPI(agentName, `/${safeId}:approvePlan`, 'POST', {});
+  return julesAPI(agentName, `/${safeId}:approvePlan`, 'POST', {}, null, requestOptions);
 }
 // ==========================================
 // ACTIVITIES METHODS
@@ -118,11 +118,18 @@ export async function getActivity(agentName, sessionId, activityId) {
 /**
  * Starts a Jules session and monitors it until completion or failure.
  */
-export async function startAndMonitorSession(instruction, agentName, project) {
+export async function startAndMonitorSession(instruction, agentName, project, options = {}) {
   console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
   const MAX_RETRIES = 3;
   let attempt = 0;
+  const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
+  const preferredTokenId = options.preferredTokenId ? String(options.preferredTokenId) : null;
+  const requestOptions = preferredTokenId ? { preferredTokenId } : {};
   while (attempt < MAX_RETRIES) {
+    if (shouldStop()) {
+      console.log(`[${project.id} - ${agentName}] 🛑 Arrêt demandé avant création de session.`);
+      return false;
+    }
     attempt++;
     try {
       // Format sourceId: prepend 'sources/github/'
@@ -134,7 +141,8 @@ export async function startAndMonitorSession(instruction, agentName, project) {
         `${agentName} Task for ${project.id}`,
         formattedSourceId,
         project.githubBranch || 'main', // Using configured branch or defaulting to main
-        "AUTO_CREATE_PR"
+        "AUTO_CREATE_PR",
+        requestOptions
       );
       if (!session || !session.name) {
         console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session. (Tentative ${attempt}/${MAX_RETRIES})`);
@@ -145,16 +153,20 @@ export async function startAndMonitorSession(instruction, agentName, project) {
       let sessionName = session.name;
       // Boucle de surveillance infinie jusqu'à complétion ou échec
       while (true) {
-        const state = await getSession(agentName, sessionName);
+        if (shouldStop()) {
+          console.log(`[${project.id} - ${agentName}] 🛑 Arrêt demandé pendant la surveillance de session.`);
+          return false;
+        }
+        const state = await getSession(agentName, sessionName, requestOptions);
         if (!state) {
           await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
           continue;
         }
         if (state.state === 'AWAITING_PLAN_APPROVAL') {
-          await approvePlan(agentName, sessionName);
+          await approvePlan(agentName, sessionName, requestOptions);
         } else if (state.state === 'AWAITING_USER_FEEDBACK') {
           console.log(`[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
-          await sendMessage(agentName, sessionName, "keep going");
+          await sendMessage(agentName, sessionName, "keep going", requestOptions);
         } else if (state.state === 'COMPLETED') {
           // Anti-Triche : Vérifier qu'une PR a bien été créée
           let hasPR = false;
@@ -186,6 +198,10 @@ export async function startAndMonitorSession(instruction, agentName, project) {
           break; // Sort de la boucle de surveillance pour recommencer une nouvelle session
         }
         // On attend avant de revérifier l'état
+        if (shouldStop()) {
+          console.log(`[${project.id} - ${agentName}] 🛑 Arrêt demandé avant prochain polling.`);
+          return false;
+        }
         await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
       }
     } catch (e) {

@@ -1,9 +1,7 @@
-import { PROJECTS } from './config.js';
-import { runBackgroundAgent } from './agents/background.js';
-import { runIssueAgent } from './agents/issueAgent.js';
-import { scheduleBuildAndMergePipeline, scheduleGlobalDailyPRMergePipeline, scheduleAutoMergeService } from './agents/pipeline.js';
-import { initProjectState } from './db/database.js';
+import 'dotenv/config';
 import app from './app.js';
+import { controlCenter } from './controlCenter.js';
+import { GLOBAL_CONFIG } from './config.js';
 
 // Serveur de santé pour Render
 const PORT = process.env.PORT || 3000;
@@ -12,21 +10,14 @@ app.listen(PORT, () => {
     console.log(`Health server listening on port ${PORT}`);
 });
 
-PROJECTS.forEach(project => {
-  if (project.githubRepo) {
-    // Initialisation de l'état en base de données SQLite
-    initProjectState(project.id);
-    // Lancement asynchrone des 3 cerveaux pour ce projet
-    runBackgroundAgent(project).catch(err => {
-        console.error(`[${project.id}] 💥 Exception non gérée dans Background Agent:`, err);
-    });
-    runIssueAgent(project).catch(err => {
-        console.error(`[${project.id}] 💥 Exception non gérée dans Issue Agent:`, err);
-    });
-    scheduleBuildAndMergePipeline(project);
-
-  }
-});
-
-scheduleGlobalDailyPRMergePipeline(PROJECTS);
-scheduleAutoMergeService(PROJECTS);
+if (GLOBAL_CONFIG.MOCK_MODE) {
+  controlCenter.init().then(() => {
+    console.log('ControlCenter initialized in mock mode (no agents started).');
+  }).catch((err) => {
+    console.error('Fatal error while initializing ControlCenter in mock mode:', err);
+  });
+} else {
+  controlCenter.startAll().catch((err) => {
+    console.error('Fatal error while starting ControlCenter:', err);
+  });
+}

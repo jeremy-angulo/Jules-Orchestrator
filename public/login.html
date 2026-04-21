@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login - Jules Orchestrator</title>
+  <link rel="stylesheet" href="/assets/login.css" />
+</head>
+<body>
+  <main class="auth-wrap">
+    <section class="auth-card">
+      <p class="eyebrow">Jules Orchestrator</p>
+      <h1>Connexion dashboard</h1>
+      <p class="muted" id="modeLabel">Connecte-toi avec ton compte.</p>
+
+      <form id="authForm" class="stack">
+        <label>
+          Email
+          <input id="email" type="email" required autocomplete="email" />
+        </label>
+        <label>
+          Mot de passe
+          <input id="password" type="password" required autocomplete="current-password" minlength="10" />
+        </label>
+        <label>
+          MFA code (optionnel)
+          <input id="mfaCode" type="text" autocomplete="one-time-code" />
+        </label>
+        <button type="submit" class="btn" id="submitBtn">Se connecter</button>
+      </form>
+
+      <p class="feedback" id="feedback"></p>
+    </section>
+  </main>
+
+  <script type="module" src="/assets/login.js"></script>
+</body>
+</html>

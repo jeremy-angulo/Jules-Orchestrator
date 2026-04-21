@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Jules Orchestrator Control Center</title>
+  <link rel="stylesheet" href="/assets/style.css" />
+</head>
+<body>
+  <div class="simple-shell">
+    <header class="topbar card">
+      <div>
+        <p class="eyebrow">Jules Orchestrator</p>
+        <h1>Vue simplifiee</h1>
+        <p class="subtitle">Monitoring clair, lecture seule, sans actions agressives.</p>
+      </div>
+      <div class="topbar-actions">
+        <span id="currentUserLabel" class="status-pill">Utilisateur: -</span>
+        <span id="modeBadge" class="status-pill status-muted">Chargement...</span>
+        <button id="refreshBtn" class="btn" type="button">Rafraichir</button>
+        <button id="logoutBtn" class="btn btn-secondary" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="grid-simple">
+      <section class="card">
+        <h2>Vue globale</h2>
+        <div id="overviewStats" class="stats-row"></div>
+      </section>
+
+      <section class="card">
+        <h2>Keys API</h2>
+        <p id="keysSummary" class="muted">Chargement...</p>
+        <ul id="keysList" class="simple-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Projets</h2>
+        <ul id="projectsList" class="simple-list"></ul>
+      </section>
+
+      <section class="card">
+        <h2>Runners</h2>
+        <ul id="runnersList" class="simple-list"></ul>
+      </section>
+
+      <section class="card card-wide">
+        <h2>Events recents</h2>
+        <ul id="eventsList" class="simple-list"></ul>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

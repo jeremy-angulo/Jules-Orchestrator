@@ -3,9 +3,13 @@ import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
 import { createAndMergePR, mergeOpenPRs } from '../api/githubClient.js';
 import { lockProject, unlockProject, incrementTasks, decrementTasks, getActiveTasks } from '../db/database.js';
-export function scheduleBuildAndMergePipeline(project) {
-  if (!project.buildAndMergePipeline) return;
-  cron.schedule(project.buildAndMergePipeline.cronSchedule, async () => {
+export async function runBuildAndMergePipelineOnce(project, options = {}) {
+  if (!project.buildAndMergePipeline) {
+    return;
+  }
+
+  const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
+
     try {
       console.log(`\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour le Build & Merge...`);
       // 1. Lever le drapeau rouge
@@ -14,6 +18,10 @@ export function scheduleBuildAndMergePipeline(project) {
       let waited = 0;
       const timeout = 7200; // 2 heures en secondes
       while (await getActiveTasks(project.id) > 0 && waited < timeout) {
+        if (shouldStop()) {
+          console.log(`[${project.id} - Pipeline] 🛑 Arrêt demandé pendant l'attente des tâches actives.`);
+          return;
+        }
         await sleep(15000);
         waited += 15;
       }
@@ -35,12 +43,16 @@ export function scheduleBuildAndMergePipeline(project) {
       const PIPELINE_TIMEOUT_MS = 3 * 60 * 60 * 1000; // 3 heures
 
       while (!success) {
+        if (shouldStop()) {
+            console.log(`[${project.id} - Pipeline] 🛑 Arrêt demandé pendant la boucle de réparation.`);
+            break;
+        }
         if (Date.now() - pipelineStartTime >= PIPELINE_TIMEOUT_MS) {
             console.log(`[${project.id} - Pipeline] ⚠️ Timeout global du pipeline atteint (3h). Arrêt des tentatives pour débloquer les agents.`);
             break;
         }
 
-        success = await startAndMonitorSession(prompt, "Build & Merge Agent", project);
+        success = await startAndMonitorSession(prompt, "Build & Merge Agent", project, { shouldStop });
         if (success) {
           // 4. Si Jules a réussi à stabiliser le build, Node.js crée la PR et la fusionne
           try {
@@ -70,12 +82,19 @@ export function scheduleBuildAndMergePipeline(project) {
         await unlockProject(project.id);
         console.log(`[${project.id} - Pipeline] 🔓 Projet déverrouillé, les agents repartent au galop !`);
     }
+}
+
+export function scheduleBuildAndMergePipeline(project, options = {}) {
+  if (!project.buildAndMergePipeline) return null;
+  return cron.schedule(project.buildAndMergePipeline.cronSchedule, async () => {
+    await runBuildAndMergePipelineOnce(project, options);
   });
 }
 
-export function scheduleGlobalDailyPRMergePipeline(projects) {
+export function scheduleGlobalDailyPRMergePipeline(projects, options = {}) {
+  const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
   // Execute daily at 17:00 PM
-  cron.schedule("0 17 * * *", async () => {
+  return cron.schedule("0 17 * * *", async () => {
     try {
       console.log(`\n[Global PR Merge Pipeline] ⏰ Verrouillage de tous les repos pour la fusion des PRs de la journée...`);
       // 1. Lock all projects
@@ -89,6 +108,10 @@ export function scheduleGlobalDailyPRMergePipeline(projects) {
       let allTasksDone = false;
 
       while (!allTasksDone && waited < timeout) {
+        if (shouldStop()) {
+          console.log('[Global PR Merge Pipeline] 🛑 Arrêt demandé pendant le wait global.');
+          return;
+        }
         let totalActiveTasks = 0;
         for (const project of projects) {
           totalActiveTasks += await getActiveTasks(project.id);
@@ -126,7 +149,7 @@ STEP 3 (STABILIZE): Ensure the newly merged code compiles and builds correctly f
 STEP 4 (DEPLOY TO PREVIEW): Once the main working branch is stable, merge it into the 'preview' branch.
 DO NOT STOP until the 'preview' branch is updated with the day's stable work across all managed repositories.`;
 
-      const success = await startAndMonitorSession(prompt, "Global Daily PR Merge Agent", orchestratorProject);
+  const success = await startAndMonitorSession(prompt, "Global Daily PR Merge Agent", orchestratorProject, { shouldStop });
 
       if (success) {
           console.log(`[Global PR Merge Pipeline] ✅ Fusion quotidienne des PR terminée avec succès.`);
@@ -145,12 +168,17 @@ DO NOT STOP until the 'preview' branch is updated with the day's stable work acr
   });
 }
 
-export function scheduleAutoMergeService(projects) {
+export function scheduleAutoMergeService(projects, options = {}) {
+  const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
   // Execute every 5 minutes
-  cron.schedule("*/5 * * * *", async () => {
+  return cron.schedule("*/5 * * * *", async () => {
     try {
       console.log(`\n[Auto-Merge Service] ⏰ Lancement de la vérification des PRs en attente...`);
       for (const project of projects) {
+         if (shouldStop()) {
+           console.log('[Auto-Merge Service] 🛑 Arrêt demandé.');
+           return;
+         }
          if (!project.githubRepo) continue;
          // Prevent flooding APIs
          await sleep(2000);
