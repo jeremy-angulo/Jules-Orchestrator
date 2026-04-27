@@ -1,21 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert';
-import { julesAPI, startAndMonitorSession } from '../src/api/julesClient.js';
+import esmock from 'esmock';
 import { GLOBAL_CONFIG } from '../src/config.js';
 import Database from 'better-sqlite3';
-const db = new Database('orchestrator.db');
 
+// Set up config for tests
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
+GLOBAL_CONFIG.POLLING_INTERVAL = 10;
 
 const mockProject = {
   id: 'test-project',
   githubRepo: 'test/repo',
 };
 
-// Replace polling interval for faster tests
-GLOBAL_CONFIG.POLLING_INTERVAL = 10;
+// We need to use esmock to load the modules with mocked sleep
+const { julesAPI, startAndMonitorSession } = await esmock('../src/api/julesClient.js', {
+  '../src/utils/helpers.js': {
+    sleep: async () => Promise.resolve()
+  }
+});
 
+const db = new Database('orchestrator.db');
 
 test.beforeEach(() => {
   db.exec('DELETE FROM api_calls_log');
@@ -24,19 +30,31 @@ test.beforeEach(() => {
 test('julesAPI - handles network errors', async (t) => {
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Fetch failed'); });
 
-  const result = await julesAPI('/test');
+  const result = await julesAPI('TestAgent', '/test');
   assert.strictEqual(result, null);
 });
 
 test('julesAPI - handles non-ok status', async (t) => {
-  t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 401, statusText: 'Unauthorized', text: async () => 'error text' }));
+  t.mock.method(globalThis, 'fetch', async () => ({ 
+    ok: false, 
+    status: 401, 
+    statusText: 'Unauthorized', 
+    text: async () => 'error text',
+    json: async () => ({ error: 'error text' })
+  }));
 
-  const result = await julesAPI('/test');
+  const result = await julesAPI('TestAgent', '/test');
   assert.strictEqual(result, null);
 });
 
 test('startAndMonitorSession - fails if session creation fails', async (t) => {
-    t.mock.method(globalThis, 'fetch', async () => ({ ok: false, status: 500, statusText: 'Server Error', text: async () => 'error text' }));
+    t.mock.method(globalThis, 'fetch', async () => ({ 
+      ok: false, 
+      status: 500, 
+      statusText: 'Server Error', 
+      text: async () => 'error text',
+      json: async () => ({ error: 'error text' })
+    }));
 
     const result = await startAndMonitorSession('instruction', 'Test Agent', mockProject);
     assert.strictEqual(result, false);
@@ -50,10 +68,11 @@ test('startAndMonitorSession - completes successfully and verifies PR', async (t
       if (callCount === 1) { // Session creation
         const body = JSON.parse(options.body);
         assert.strictEqual(body.sourceContext.source, 'sources/github/test/repo', 'Source ID should match API format with slashes');
+        assert.ok(options.headers['X-Goog-Api-Key'], 'X-Goog-Api-Key header should be present');
         return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
       }
       if (callCount === 2) { // First poll -> COMPLETED
-        return { ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { title: "My PR" } }] }) };
+        return { ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { title: "My PR", url: "https://github.com/test/repo/pull/123" } }] }) };
       }
       return { ok: false, status: 500, statusText: 'Unexpected call', text: async () => '' };
     });
@@ -107,7 +126,13 @@ test('startAndMonitorSession - handles missing state (null) robustly', async (t)
       return { ok: true, text: async () => JSON.stringify({ name: 'sessions/123' }) };
     }
     if (callCount === 2) { // First poll -> API returns 500 Error, so julesAPI returns null
-      return { ok: false, status: 500, statusText: 'Server Error', text: async () => 'error text' };
+      return { 
+        ok: false, 
+        status: 500, 
+        statusText: 'Server Error', 
+        text: async () => 'error text',
+        json: async () => ({ error: 'error text' })
+      };
     }
     if (callCount === 3) { // Second poll -> API recovers, status FAILED (to end test)
       return { ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) };

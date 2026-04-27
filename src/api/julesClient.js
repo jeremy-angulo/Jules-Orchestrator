@@ -3,6 +3,7 @@ import { sleep } from '../utils/helpers.js';
 import { checkAndMergePR } from './githubClient.js';
 import { getAvailableToken } from './tokenRotation.js';
 import { recordApiCall } from '../db/database.js';
+import { recordServiceCheck, recordServiceError } from '../db/database.js';
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
 /**
  * Base API client for Jules REST API
@@ -36,7 +37,14 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     options.body = JSON.stringify(body);
   }
   try {
+    const startedAt = Date.now();
+    console.log(`[DEBUG] julesAPI: ${method} ${url}`);
     const res = await fetch(url, options);
+    const responseMs = Date.now() - startedAt;
+    recordServiceCheck('jules_api', res.ok, {
+      statusCode: res.status,
+      responseMs
+    });
     if (!res.ok) {
       let errorDetails = '';
       try {
@@ -46,6 +54,15 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
         errorDetails = await res.text().catch(() => '');
       }
       console.error(`[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
+      recordServiceError('jules_api', `Jules API returned ${res.status}`, {
+        code: String(res.status),
+        statusCode: res.status,
+        statusText: res.statusText,
+        endpoint,
+        method,
+        responseMs,
+        errorDetails
+      });
       return null;
     }
     // Some endpoints like DELETE might return empty responses
@@ -53,6 +70,16 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     return text ? JSON.parse(text) : {};
   } catch (error) {
     console.error(`[julesAPI] Network Error:`, error);
+    recordServiceCheck('jules_api', false, {
+      statusCode: null,
+      responseMs: null
+    });
+    recordServiceError('jules_api', 'Jules API network error', {
+      code: error?.name || 'NETWORK_ERROR',
+      endpoint,
+      method,
+      message: String(error?.message || error)
+    });
     return null;
   }
 }
@@ -64,12 +91,13 @@ export async function listSources(agentName, pageSize, pageToken, filter) {
 }
 export async function getSource(agentName, sourceId) {
   const safeId = sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`;
+  console.log(`[DEBUG] getSource: agentName=${agentName}, sourceId=${sourceId}, safeId=${safeId}`);
   return julesAPI(agentName, `/${safeId}`);
 }
 // ==========================================
 // SESSIONS METHODS
 // ==========================================
-export async function createSession(agentName, prompt, title, sourceId, startingBranch, automationMode, requestOptions = {}) {
+export async function createSession(agentName, prompt, title, sourceId, startingBranch, automationMode, requestOptions = {}, media = null) {
   const body = {
     prompt,
     title,
@@ -80,6 +108,13 @@ export async function createSession(agentName, prompt, title, sourceId, starting
       }
     }
   };
+  
+  if (media && media.length > 0) {
+    body.sourceContext.mediaContext = {
+      media: media // array of { inlineData: { mimeType, data } }
+    };
+  }
+
   if (automationMode) {
     body.automationMode = automationMode;
   }
@@ -115,6 +150,44 @@ export async function getActivity(agentName, sessionId, activityId) {
 // ==========================================
 // WORKFLOW METHODS
 // ==========================================
+
+/**
+ * Monitors an already-running Jules session until it completes or fails.
+ * Returns true if completed with a PR, false otherwise.
+ */
+export async function monitorExistingSession(sessionName, agentName, project, options = {}) {
+  const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
+  const requestOptions = options.preferredTokenId ? { preferredTokenId: String(options.preferredTokenId) } : {};
+
+  const state = await getSession(agentName, sessionName, requestOptions).catch(() => null);
+  if (!state) return false;
+  // Session already done — treat as if we just missed the end
+  if (state.state === 'COMPLETED' || state.state === 'FAILED') {
+    const hasPR = state.outputs?.some(o => o.pullRequest);
+    return state.state === 'COMPLETED' && hasPR;
+  }
+
+  // Resume the monitoring loop
+  while (true) {
+    if (shouldStop()) return false;
+    const s = await getSession(agentName, sessionName, requestOptions).catch(() => null);
+    if (!s) { await sleep(GLOBAL_CONFIG.POLLING_INTERVAL); continue; }
+    if (s.state === 'AWAITING_PLAN_APPROVAL') {
+      await approvePlan(agentName, sessionName, requestOptions).catch(() => {});
+    } else if (s.state === 'AWAITING_USER_FEEDBACK') {
+      await sendMessage(agentName, sessionName, 'keep going', requestOptions).catch(() => {});
+    } else if (s.state === 'COMPLETED') {
+      const hasPR = s.outputs?.some(o => o.pullRequest);
+      if (!hasPR) return false;
+      console.log(`[${project.id} - ${agentName}] ✅ Resumed session completed with PR.`);
+      return true;
+    } else if (s.state === 'FAILED') {
+      return false;
+    }
+    await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+  }
+}
+
 /**
  * Starts a Jules session and monitors it until completion or failure.
  */
@@ -142,7 +215,8 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         formattedSourceId,
         project.githubBranch || 'main', // Using configured branch or defaulting to main
         "AUTO_CREATE_PR",
-        requestOptions
+        requestOptions,
+        options.media
       );
       if (!session || !session.name) {
         console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session. (Tentative ${attempt}/${MAX_RETRIES})`);
@@ -151,6 +225,10 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         continue;
       }
       let sessionName = session.name;
+      if (typeof options.onSessionCreated === 'function') {
+        options.onSessionCreated(sessionName);
+      }
+      
       // Boucle de surveillance infinie jusqu'à complétion ou échec
       while (true) {
         if (shouldStop()) {

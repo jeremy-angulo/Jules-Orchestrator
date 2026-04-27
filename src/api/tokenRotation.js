@@ -1,5 +1,5 @@
 import { GLOBAL_CONFIG } from '../config.js';
-import { getTokenUsage24h } from '../db/database.js';
+import { getTokenUsage24h, getTokenName } from '../db/database.js';
 
 function maskToken(token) {
   if (!token) return 'not-configured';
@@ -12,19 +12,24 @@ export function getTokenInventory() {
     .map((token) => (token || '').trim())
     .filter(Boolean);
 
-  const labels = GLOBAL_CONFIG.JULES_TOKEN_EMAILS || [];
-
   return allTokens.map((token, index) => {
     const id = `key-${index + 1}`;
-    const email = labels[index] || `unknown-${index + 1}@local`;
+    const isPrimary = index === 0;
+    
+    // Get custom name from database, fallback to "Token 1", "Token 2", etc.
+    const customNameRecord = getTokenName(index);
+    const defaultLabel = `Token ${index + 1}`;
+    const label = customNameRecord?.customName || defaultLabel;
+    
     return {
       id,
-      email,
-      label: email,
-      isPrimary: index === 0,
+      index,
+      label,
+      isPrimary,
       configured: true,
       maskedToken: maskToken(token),
       usage24h: getTokenUsage24h(token),
+      limit24h: isPrimary ? 100 : 15,
       token
     };
   });

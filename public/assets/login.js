@@ -5,7 +5,6 @@ const modeLabel = document.querySelector('#modeLabel');
 
 const emailInput = document.querySelector('#email');
 const passwordInput = document.querySelector('#password');
-const mfaCodeInput = document.querySelector('#mfaCode');
 
 function isSetupMode() {
   const params = new URLSearchParams(window.location.search);
@@ -56,8 +55,7 @@ async function initMode() {
       await submitAuth(
         {
           email: emailInput.value.trim(),
-          password: passwordInput.value,
-          mfaCode: mfaCodeInput.value.trim()
+          password: passwordInput.value
         },
         setupMode
       );

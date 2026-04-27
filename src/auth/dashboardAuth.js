@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 import { isValidRole } from './permissions.js';
 
-const db = new Database('orchestrator.db');
+const DB_PATH = process.env.ORCHESTRATOR_DB_PATH || 'orchestrator.db';
+const db = new Database(DB_PATH);
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 
@@ -93,8 +94,8 @@ export function createDashboardUser(email, password, role = 'viewer') {
   if (!safeEmail || !safeEmail.includes('@')) {
     throw new Error('Invalid email.');
   }
-  if (safePassword.length < 10) {
-    throw new Error('Password must be at least 10 characters long.');
+  if (safePassword.length < 3) {
+    throw new Error('Password must be at least 3 characters long.');
   }
   if (!isValidRole(role)) {
     throw new Error('Invalid role.');
@@ -188,8 +189,8 @@ export function updateDashboardUserRole(userId, role) {
 
 export function updateDashboardUserPassword(userId, password) {
   const safePassword = String(password || '');
-  if (safePassword.length < 10) {
-    throw new Error('Password must be at least 10 characters long.');
+  if (safePassword.length < 3) {
+    throw new Error('Password must be at least 3 characters long.');
   }
   const passwordHash = hashPassword(safePassword);
   const info = updatePasswordStmt.run(passwordHash, userId);

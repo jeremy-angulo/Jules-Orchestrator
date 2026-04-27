@@ -10,52 +10,23 @@ export const GLOBAL_CONFIG = {
   JULES_MAIN_TOKEN: process.env.JULES_MAIN_TOKEN,
   JULES_SECONDARY_TOKENS: process.env.JULES_SECONDARY_TOKENS ? process.env.JULES_SECONDARY_TOKENS.split(',').map(t => t.trim()) : [],
   JULES_TOKEN_EMAILS: process.env.JULES_TOKEN_EMAILS ? process.env.JULES_TOKEN_EMAILS.split(',').map(t => t.trim()) : [],
-  MOCK_MODE: parseBooleanEnv(process.env.DASHBOARD_MOCK_MODE || process.env.MOCK_MODE),
   POLLING_INTERVAL: 15000, // Vérifie l'état de Jules toutes les 15 secondes
 };
 
 // Configuration de tes Repositories
-export const PROJECTS = [
-  {
-    id: "HomeFreeWorld",
-    githubRepo:"jeremy-angulo/HomeFreeWorld",
-    githubBranch: "dev",
-    githubToken: process.env.GITHUB_TOKEN,
-    backgroundPrompts: [
-      loadPrompt("HomeFreeWorld", "lead-sdet"),
-      loadPrompt("HomeFreeWorld", "lead-product-engineer"),
-      // Add other prompts as files in prompts/HomeFreeWorld/
-    ],
-    buildAndMergePipeline: {
-      cronSchedule: "0 5 * * *",
-      sourceBranch: "dev",
-      targetBranch: "preview",
-      prompt: loadPrompt("HomeFreeWorld", "pipeline-release-manager")
-    }
-  },
-  {
-    id: "TrefleAI_IHM",
-    githubRepo: "jeremy-angulo/TrefleAI_IHM",
-    githubBranch: "dev",
-    githubToken: process.env.GITHUB_TOKEN,
-    backgroundPrompts: [
-        loadPrompt("TrefleAI_IHM", "autonomous-sdet"),
-        loadPrompt("TrefleAI_IHM", "lead-product-ux")
-    ],
-    buildAndMergePipeline: {
-      cronSchedule: "0 5 * * *",
-      sourceBranch: "dev",
-      targetBranch: "preview",
-      prompt: loadPrompt("TrefleAI_IHM", "night-watch-qa")
-    }
-  },
-  {
-    id: "Pipeline-CAC40",
-    githubRepo: "jeremy-angulo/Pipeline-CAC40",
-    githubBranch: "master",
-    githubToken: process.env.GITHUB_TOKEN,
-    backgroundPrompts: [
-        loadPrompt("Pipeline-CAC40", "senior-software-engineer")
-    ]
+const PROJECT_PROMPT_KEYS = {
+  HomeFreeWorld: {
+    background: ['lead-sdet', 'lead-product-engineer'],
+    pipeline: 'pipeline-release-manager'
   }
-];
+};
+
+function getProjectPrompt(projectId, promptName) {
+  if (!promptName) return '';
+  return loadPrompt(projectId, promptName);
+}
+
+export function getProjectBackgroundPrompts(projectId) {
+  const names = PROJECT_PROMPT_KEYS[projectId]?.background || [];
+  return names.map((name) => getProjectPrompt(projectId, name));
+}

@@ -18,10 +18,8 @@ test('scheduleBuildAndMergePipeline - handles errors gracefully', (t) => {
   const mockProject = {
     id: 'test-project',
     buildAndMergePipeline: {
-      cronSchedule: "0 5 * * *",
-      sourceBranch: "dev",
-      targetBranch: "preview",
-      prompt: "test"
+      cronSchedule: "0 0 * * *",
+      prompt: "Test pipeline"
     },
     state: { isLockedForDaily: false, activeTasks: 0 }
   };
@@ -45,10 +43,8 @@ test('scheduleBuildAndMergePipeline - executes callback logic', async (t) => {
   const mockProject = {
     id: 'test-pipeline-1',
     buildAndMergePipeline: {
-      cronSchedule: "0 5 * * *",
-      sourceBranch: "dev",
-      targetBranch: "preview",
-      prompt: "Test {sourceBranch} to {targetBranch}"
+      cronSchedule: "0 0 * * *",
+      prompt: "Test pipeline"
     }
   };
 
@@ -65,12 +61,6 @@ test('scheduleBuildAndMergePipeline - executes callback logic', async (t) => {
      } else if (fetchCallCount === 2) {
          // Get session -> return completed with PR to simulate success
          return { ok: true, text: async () => JSON.stringify({ state: "COMPLETED", outputs: [{ pullRequest: {} }] }) };
-     } else if (fetchCallCount === 3) {
-         // Github create PR
-         return { ok: true, json: async () => ({ number: 123 }) };
-     } else if (fetchCallCount === 4) {
-         // Github merge PR
-         return { ok: true };
      }
      return { ok: false };
   });
@@ -81,7 +71,7 @@ test('scheduleBuildAndMergePipeline - executes callback logic', async (t) => {
   // Manually run the scheduled task
   await tasks[0]();
 
-  assert.strictEqual(fetchCallCount, 4, 'Should have made 4 fetch calls for a successful pipeline');
+  assert.strictEqual(fetchCallCount, 2, 'Should have made 2 fetch calls for a successful pipeline');
   assert.strictEqual(await db.isProjectLocked('test-pipeline-1'), false, 'Project should be unlocked after');
 });
 
@@ -95,10 +85,8 @@ test('scheduleBuildAndMergePipeline - skips PR if session fails', async (t) => {
   const mockProject = {
     id: 'test-pipeline-2',
     buildAndMergePipeline: {
-      cronSchedule: "0 5 * * *",
-      sourceBranch: "dev",
-      targetBranch: "preview",
-      prompt: "test"
+      cronSchedule: "0 0 * * *",
+      prompt: "Test pipeline"
     }
   };
 
@@ -113,6 +101,21 @@ test('scheduleBuildAndMergePipeline - skips PR if session fails', async (t) => {
      } else if (fetchCallCount === 2) {
          // Get session -> return FAILED to simulate failure
          return { ok: true, text: async () => JSON.stringify({ state: "FAILED" }) };
+     } else if (fetchCallCount === 3) {
+         // Create session retry
+         return { ok: true, text: async () => JSON.stringify({ name: "sessions/2" }) };
+     } else if (fetchCallCount === 4) {
+         // Get session retry -> SUCCESS
+         return { ok: true, text: async () => JSON.stringify({ state: "COMPLETED", outputs: [{ pullRequest: {} }] }) };
+     } else if (fetchCallCount === 5) {
+         // Github create PR
+         return { ok: true, json: async () => ({ number: 124 }) };
+     } else if (fetchCallCount === 6) {
+         // Github get PR status (polling mergeable_state)
+         return { ok: true, json: async () => ({ number: 124, mergeable: true, merged: false }) };
+     } else if (fetchCallCount === 7) {
+         // Github merge PR
+         return { ok: true };
      }
      return { ok: false };
   });

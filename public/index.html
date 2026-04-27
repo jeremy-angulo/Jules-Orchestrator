@@ -1,55 +1,522 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Jules Orchestrator Control Center</title>
+  <title>Jules Orchestrator</title>
   <link rel="stylesheet" href="/assets/style.css" />
 </head>
 <body>
-  <div class="simple-shell">
-    <header class="topbar card">
-      <div>
-        <p class="eyebrow">Jules Orchestrator</p>
-        <h1>Vue simplifiee</h1>
-        <p class="subtitle">Monitoring clair, lecture seule, sans actions agressives.</p>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <div class="brand-mark">◎</div>
+        <div>
+          <p class="brand-title">Jules</p>
+          <p class="brand-subtitle">Orchestrator</p>
+        </div>
       </div>
-      <div class="topbar-actions">
-        <span id="currentUserLabel" class="status-pill">Utilisateur: -</span>
-        <span id="modeBadge" class="status-pill status-muted">Chargement...</span>
-        <button id="refreshBtn" class="btn" type="button">Rafraichir</button>
-        <button id="logoutBtn" class="btn btn-secondary" type="button">Logout</button>
-      </div>
-    </header>
 
-    <main class="grid-simple">
-      <section class="card">
-        <h2>Vue globale</h2>
-        <div id="overviewStats" class="stats-row"></div>
-      </section>
+      <nav class="nav-list" aria-label="Main navigation">
+        <button class="nav-item is-active" data-view="overview" type="button">Overview</button>
+        <button class="nav-item" data-view="projects" type="button">Projects</button>
+        <div id="sidebarProjects" class="sidebar-sub-list"></div>
+        <button class="nav-item" data-view="agents" type="button">Agents</button>
+        <button class="nav-item" data-view="sessions" type="button">Sessions</button>
+        <button class="nav-item" data-view="health" type="button">Health</button>
+        <button class="nav-item" data-view="users" type="button">Users</button>
+      </nav>
 
-      <section class="card">
-        <h2>Keys API</h2>
-        <p id="keysSummary" class="muted">Chargement...</p>
-        <ul id="keysList" class="simple-list"></ul>
-      </section>
+      <button id="systemToggleBtn" class="system-pill" type="button">System ONLINE</button>
+    </aside>
 
-      <section class="card">
-        <h2>Projets</h2>
-        <ul id="projectsList" class="simple-list"></ul>
-      </section>
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <p id="pageEyebrow" class="eyebrow">Dashboard</p>
+          <h1 id="pageTitle">Overview</h1>
+          <p id="pageSubtitle" class="subtitle">Orchestrator overview</p>
+        </div>
+        <div class="topbar-actions">
+          <span id="modeBadge" class="status-pill status-muted">Loading...</span>
+          <span id="clockLabel" class="clock-label">--:--:--</span>
+          <span id="currentUserLabel" class="status-pill">-</span>
+          <button id="refreshBtn" class="btn" type="button">Refresh</button>
+          <button id="logoutBtn" class="btn btn-secondary" type="button">Logout</button>
+        </div>
+      </header>
 
-      <section class="card">
-        <h2>Runners</h2>
-        <ul id="runnersList" class="simple-list"></ul>
-      </section>
+      <main class="views-wrap">
 
-      <section class="card card-wide">
-        <h2>Events recents</h2>
-        <ul id="eventsList" class="simple-list"></ul>
-      </section>
-    </main>
+        <!-- OVERVIEW -->
+        <section id="view-overview" class="view is-active" data-view="overview">
+          <div id="overviewMetrics" class="metric-grid"></div>
+          <div class="split-grid">
+            <article class="card panel-feed">
+              <div class="panel-head">
+                <h2>Activity Feed</h2>
+                <span class="mono small">Live</span>
+              </div>
+              <ul id="eventsFeed" class="feed-list"></ul>
+            </article>
+            <article class="card">
+              <div class="panel-head">
+                <h2>Project Status</h2>
+              </div>
+              <div id="quickProjectStatus" class="stack-list"></div>
+            </article>
+          </div>
+        </section>
+
+        <!-- PROJECTS -->
+        <section id="view-projects" class="view" data-view="projects">
+          <div class="view-toolbar">
+            <div>
+              <h2 style="margin:0">Connected Projects</h2>
+              <p class="muted small" style="margin-top:4px">Click a project to manage its agents and assignments</p>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button id="addProjectBtn" class="btn" type="button">+ Add Project</button>
+              <button id="refreshSourcesBtn" class="btn btn-secondary" type="button">Check Jules Sources</button>
+            </div>
+          </div>
+          <div id="projectsCards" class="projects-grid"></div>
+
+          <div class="card" style="margin-top: 1.5rem;">
+            <div class="panel-head">
+              <h2>Jules Sources</h2>
+              <span class="muted small">Repositories connected to your Jules account</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Source ID</th><th>Repository</th><th>Visibility</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="julesSourcesRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- PROJECT DETAIL -->
+        <section id="view-project-detail" class="view" data-view="project-detail">
+          <div class="panel-head" style="margin-bottom:1.5rem">
+            <div id="projectDetailTitle" style="display:flex;align-items:center;gap:10px;flex:1"></div>
+          </div>
+          <div id="projectDetailContent"></div>
+        </section>
+
+        <!-- AGENTS LIBRARY -->
+        <section id="view-agents" class="view" data-view="agents">
+          <div class="view-toolbar">
+            <div>
+              <h2 style="margin:0">Agent Library</h2>
+              <p class="muted small" style="margin-top:4px">Reusable agents with prompts — assign them to projects</p>
+            </div>
+            <button id="createAgentBtn" class="btn" type="button">+ Create Agent</button>
+          </div>
+          <div id="agentsGrid" class="agents-library-grid"></div>
+
+          <div class="card" style="margin-top:2rem">
+            <div class="panel-head">
+              <h2>Active Runners</h2>
+              <div id="schedulerState" class="chips" style="margin:0"></div>
+            </div>
+            <div id="runnersGrid" class="stack-list" style="margin-top:1rem"></div>
+          </div>
+        </section>
+
+        <!-- SESSIONS -->
+        <section id="view-sessions" class="view" data-view="sessions">
+          <div id="sessionSummary" class="chips" style="margin-bottom:1rem"></div>
+          <div class="card">
+            <div class="panel-head">
+              <h2>Session Monitor</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Runner ID</th><th>Project</th><th>Label</th>
+                    <th>Status</th><th>Duration</th><th>Heartbeat</th>
+                  </tr>
+                </thead>
+                <tbody id="sessionsRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- HEALTH -->
+        <section id="view-health" class="view" data-view="health">
+          <div class="split-grid">
+            <article class="card">
+              <div class="panel-head">
+                <h2>API Token Usage</h2>
+                <span class="mono small">24h rolling</span>
+              </div>
+              <p id="keysSummary" class="muted">Loading...</p>
+              <div id="tokenUsageList" class="stack-list"></div>
+            </article>
+            <article class="card">
+              <div class="panel-head">
+                <h2>Service Status</h2>
+              </div>
+              <div id="serviceStatusList" class="stack-list"></div>
+            </article>
+          </div>
+          <article class="card">
+            <div class="panel-head">
+              <h2>24h Rolling Request Volume</h2>
+            </div>
+            <div id="requestVolumeBars" class="bars"></div>
+          </article>
+        </section>
+
+        <!-- USERS -->
+        <section id="view-users" class="view" data-view="users">
+          <div class="card">
+            <div class="panel-head">
+              <h2>User Management</h2>
+              <button id="inviteUserBtn" class="btn" type="button">+ Invite User</button>
+            </div>
+            <div id="usersNotice" class="notice"></div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>User</th><th>Role</th><th>Created</th><th>Last Login</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="usersRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+      </main>
+    </div>
   </div>
+
+  <div id="toast" class="toast" aria-live="polite"></div>
+
+  <!-- ===== MODALS ===== -->
+
+  <!-- Error Details Modal -->
+  <div id="errorModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Error Details</h2>
+        <button class="btn btn-icon" id="closeErrorModal" type="button">✕</button>
+      </div>
+      <div class="modal-body" id="errorModalContent"></div>
+    </div>
+  </div>
+
+  <!-- Create / Edit Agent Modal -->
+  <div id="agentModal" class="modal-overlay">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h2 id="agentModalTitle">Create Agent</h2>
+        <button class="modal-close btn btn-icon" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="agentModalId" />
+        <div class="form-group">
+          <label>Name <span class="req">*</span></label>
+          <input id="agentModalName" type="text" class="form-control" placeholder="e.g. Security Agent" />
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input id="agentModalDesc" type="text" class="form-control" placeholder="Short description of what this agent does" />
+        </div>
+        <div class="form-group">
+          <label>Color</label>
+          <div class="color-picker-row" id="agentModalColorPicker"></div>
+          <input type="hidden" id="agentModalColor" value="#3f8cff" />
+        </div>
+        <div class="form-group">
+          <label>Prompt <span class="req">*</span></label>
+          <textarea id="agentModalPrompt" class="form-control form-textarea" rows="10" placeholder="Write the full agent prompt here. Jules will receive this as instructions for each session."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close" type="button">Cancel</button>
+        <button id="agentModalSave" class="btn" type="button">Save Agent</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create / Edit Assignment Modal -->
+  <div id="assignmentModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="assignmentModalTitle">Add Assignment</h2>
+        <button class="modal-close btn btn-icon" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="assignmentModalId" />
+        <input type="hidden" id="assignmentModalProjectId" />
+        <div class="form-group">
+          <label>Agent <span class="req">*</span></label>
+          <select id="assignmentModalAgent" class="form-control"></select>
+        </div>
+        <div id="assignCustomPromptBox" class="form-group" style="display:none">
+          <label>Custom Instructions</label>
+          <textarea id="assignCustomPrompt" class="form-control form-textarea" rows="4" placeholder="Instructions for Jules..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Mode <span class="req">*</span></label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="assignMode" value="loop" checked /> Loop
+              <span class="muted small">– Runs continuously</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="assignMode" value="scheduled" /> Scheduled
+              <span class="muted small">– Runs on a cron schedule</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="assignMode" value="one-shot" /> One-Shot
+              <span class="muted small">– Runs once, then stops</span>
+            </label>
+          </div>
+        </div>
+        <div id="assignLoopConfig" class="form-group">
+          <label>Pause between runs</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="assignLoopPauseVal" type="number" class="form-control" style="width:100px" value="5" min="1" />
+            <select id="assignLoopPauseUnit" class="form-control" style="width:120px">
+              <option value="60000">minutes</option>
+              <option value="3600000">hours</option>
+            </select>
+          </div>
+        </div>
+        <div id="assignCronConfig" style="display:none">
+          <input type="hidden" id="assignCronExpr" />
+          <div class="cron-builder" id="assignCronBuilder" data-cron-freq="daily">
+            <div class="cron-freq-tabs cronFreqTabs">
+              <button class="cron-freq-btn is-active" data-freq="daily" type="button">Daily</button>
+              <button class="cron-freq-btn" data-freq="weekly" type="button">Weekly</button>
+              <button class="cron-freq-btn" data-freq="hourly" type="button">Every X hours</button>
+            </div>
+
+            <!-- Daily -->
+            <div class="cron-panel cronPanelDaily">
+              <p class="cron-panel-label">Every day at</p>
+              <div class="cron-time-row">
+                <select class="form-control cron-select cronDailyHour"></select>
+                <span class="cron-colon">:</span>
+                <select class="form-control cron-select cronDailyMin"></select>
+              </div>
+            </div>
+
+            <!-- Weekly -->
+            <div class="cron-panel cronPanelWeekly" style="display:none">
+              <p class="cron-panel-label">Every week on</p>
+              <div class="cron-day-picker cronDayPicker">
+                <button class="cron-day-btn" data-day="1" type="button">Mon</button>
+                <button class="cron-day-btn" data-day="2" type="button">Tue</button>
+                <button class="cron-day-btn" data-day="3" type="button">Wed</button>
+                <button class="cron-day-btn" data-day="4" type="button">Thu</button>
+                <button class="cron-day-btn" data-day="5" type="button">Fri</button>
+                <button class="cron-day-btn" data-day="6" type="button">Sat</button>
+                <button class="cron-day-btn" data-day="0" type="button">Sun</button>
+              </div>
+              <p class="cron-panel-label" style="margin-top:.75rem">at</p>
+              <div class="cron-time-row">
+                <select class="form-control cron-select cronWeeklyHour"></select>
+                <span class="cron-colon">:</span>
+                <select class="form-control cron-select cronWeeklyMin"></select>
+              </div>
+            </div>
+
+            <!-- Every X hours -->
+            <div class="cron-panel cronPanelHourly" style="display:none">
+              <p class="cron-panel-label">Run every</p>
+              <div class="cron-time-row">
+                <input type="number" min="1" max="23" value="6" class="form-control cron-select cronHourlyN" style="width:80px" />
+                <span class="cron-panel-label">hours</span>
+              </div>
+            </div>
+
+            <div class="cron-preview-row cronPreviewRow">
+              <span class="muted small">Cron expression:</span>
+              <code class="cron-preview-code cronPreviewExpr">0 9 * * *</code>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close" type="button">Cancel</button>
+        <button id="assignmentModalSave" class="btn" type="button">Save Assignment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run Agent Once Modal -->
+  <div id="runAgentModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Run Agent Once</h2>
+        <button class="modal-close btn btn-icon" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="runAgentModalProjectId" />
+        <p class="muted" id="runAgentModalProjectLabel"></p>
+        <div class="form-group">
+          <label>Select Agent <span class="req">*</span></label>
+          <select id="runAgentModalSelect" class="form-control">
+            <option value="custom">-- Custom Prompt --</option>
+          </select>
+        </div>
+        <div id="runAgentModalCustomBox" class="form-group">
+          <label>Custom Instructions</label>
+          <textarea id="runAgentModalInstructions" class="form-control form-textarea" rows="6" placeholder="Instructions for Jules..."></textarea>
+        </div>
+        <div class="form-group">
+          <label>Media (Images/Files)</label>
+          <input type="file" id="runAgentModalMedia" class="form-control" multiple accept="image/*,application/pdf,text/*" />
+          <p class="form-hint">Upload images or documents to provide context to Jules.</p>
+        </div>
+        <div id="runAgentModalPreview" class="prompt-preview"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close" type="button">Cancel</button>
+        <button id="runAgentModalConfirm" class="btn" type="button">Run Now</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Project Modal -->
+  <div id="projectModal" class="modal-overlay">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h2>Add Project</h2>
+        <button class="modal-close btn btn-icon" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Project ID <span class="req">*</span></label>
+          <input id="projectModalId" type="text" class="form-control" placeholder="e.g. MyApp" />
+          <p class="form-hint">Unique identifier used throughout the orchestrator</p>
+        </div>
+        <div class="form-group">
+          <label>GitHub Repo <span class="req">*</span></label>
+          <input id="projectModalRepo" type="text" class="form-control" placeholder="owner/repository" />
+        </div>
+        <div class="form-group">
+          <label>Default Branch</label>
+          <input id="projectModalBranch" type="text" class="form-control" value="main" />
+        </div>
+        <div class="form-group">
+          <label>GitHub Token <span class="muted small">(leave empty to use GITHUB_TOKEN env)</span></label>
+          <input id="projectModalToken" type="password" class="form-control" placeholder="ghp_..." autocomplete="off" />
+        </div>
+        <details style="margin-top:1rem">
+          <summary class="muted" style="cursor:pointer">Pipeline Configuration (optional)</summary>
+          <div style="margin-top:1rem">
+            <div class="form-group">
+              <label>Pipeline Cron</label>
+              <input id="projectModalPipelineCron" type="text" class="form-control" placeholder="0 5 * * *" />
+            </div>
+            <div class="form-group">
+              <label>Pipeline Prompt</label>
+              <textarea id="projectModalPipelinePrompt" class="form-control" rows="4" placeholder="Instructions for the pipeline stabilization agent..."></textarea>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close" type="button">Cancel</button>
+        <button id="projectModalSave" class="btn" type="button">Add Project</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pipeline Modal -->
+  <div id="pipelineModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="pipelineModalTitle">Configure Pipeline</h2>
+        <button class="btn btn-icon modal-close" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="pipelineModalProjectId" />
+        
+        <div class="form-group">
+          <label class="form-label">Cron Schedule</label>
+          <input type="hidden" id="pipelineCronExpr" />
+          <div class="cron-builder" id="pipelineCronBuilder" data-cron-freq="none">
+            <div class="cron-freq-tabs cronFreqTabs">
+              <button class="cron-freq-btn is-active" data-freq="none" type="button">No Schedule</button>
+              <button class="cron-freq-btn" data-freq="daily" type="button">Daily</button>
+              <button class="cron-freq-btn" data-freq="weekly" type="button">Weekly</button>
+            </div>
+
+            <!-- Daily -->
+            <div class="cron-panel cronPanelDaily">
+              <p class="cron-panel-label">Every day at</p>
+              <div class="cron-time-row">
+                <select class="form-control cron-select cronDailyHour"></select>
+                <span class="cron-colon">:</span>
+                <select class="form-control cron-select cronDailyMin"></select>
+              </div>
+            </div>
+
+            <!-- Weekly -->
+            <div class="cron-panel cronPanelWeekly" style="display:none">
+              <p class="cron-panel-label">Every week on</p>
+              <div class="cron-day-picker cronDayPicker">
+                <button class="cron-day-btn" data-day="1" type="button">Mon</button>
+                <button class="cron-day-btn" data-day="2" type="button">Tue</button>
+                <button class="cron-day-btn" data-day="3" type="button">Wed</button>
+                <button class="cron-day-btn" data-day="4" type="button">Thu</button>
+                <button class="cron-day-btn" data-day="5" type="button">Fri</button>
+                <button class="cron-day-btn" data-day="6" type="button">Sat</button>
+                <button class="cron-day-btn" data-day="0" type="button">Sun</button>
+              </div>
+              <p class="cron-panel-label" style="margin-top:.75rem">at</p>
+              <div class="cron-time-row">
+                <select class="form-control cron-select cronWeeklyHour"></select>
+                <span class="cron-colon">:</span>
+                <select class="form-control cron-select cronWeeklyMin"></select>
+              </div>
+            </div>
+
+            <div class="cron-preview-row cronPreviewRow">
+              <span class="muted small">Cron expression:</span>
+              <code class="cron-preview-code cronPreviewExpr">0 9 * * *</code>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Agent Instructions</label>
+          <textarea id="pipelineModalPrompt" class="form-control form-textarea" rows="6" placeholder="Instructions for the pipeline stabilization agent..."></textarea>
+        </div>
+      </div>
+      <div class="modal-footer" style="display:flex;justify-content:space-between">
+        <button id="pipelineModalDelete" class="btn btn-outline" style="color:var(--red);border-color:var(--red);display:none" type="button">Delete</button>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-secondary modal-close" type="button">Cancel</button>
+          <button id="pipelineModalSave" class="btn" type="button">Add Pipeline</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Session Drawer -->
+  <div id="sessionDrawer" class="session-drawer">
+    <div class="session-drawer-header">
+      <div>
+        <p id="sessionDrawerLabel" class="session-drawer-title">Session</p>
+        <p id="sessionDrawerMeta" class="muted small"></p>
+      </div>
+      <button id="sessionDrawerClose" class="btn btn-ghost btn-small" type="button">✕ Close</button>
+    </div>
+    <div id="sessionDrawerStatus" class="session-drawer-status"></div>
+    <div id="sessionDrawerFeed" class="session-drawer-feed"></div>
+  </div>
+  <div id="sessionDrawerBackdrop" class="session-drawer-backdrop"></div>
 
   <script type="module" src="/assets/app.js"></script>
 </body>

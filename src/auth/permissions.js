@@ -17,12 +17,14 @@ const PERMISSIONS = {
     'background.runOnce',
     'customLoop.start',
     'prs.merge',
+    'projects.add',
     'users.read',
     'users.manage',
     'schedulers.control',
     'audit.read',
     'analytics.read',
-    'keys.read'
+    'keys.read',
+    'keys.manage'
   ]),
   [ROLES.OPERATOR]: new Set([
     'dashboard.read',
@@ -34,9 +36,11 @@ const PERMISSIONS = {
     'background.runOnce',
     'customLoop.start',
     'prs.merge',
+    'projects.add',
     'audit.read',
     'analytics.read',
-    'keys.read'
+    'keys.read',
+    'keys.manage'
   ]),
   [ROLES.VIEWER]: new Set([
     'dashboard.read',
