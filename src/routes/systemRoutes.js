@@ -15,8 +15,35 @@ import {
     upsertTokenName
 } from '../db/database.js';
 import { getTokenStatusSummary } from '../api/tokenRotation.js';
+import { getSession, listActivities } from '../api/julesClient.js';
 
 const router = express.Router();
+
+router.get('/runners/:runnerId/session', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+    const runner = controlCenter.runners.get(req.params.runnerId);
+    if (!runner) return res.status(404).json({ error: 'Runner not found.' });
+
+    const snapshot = controlCenter.getRunnerSnapshot(runner);
+    if (!snapshot.sessionId) return res.status(200).json({ runner: snapshot, session: null, activities: [] });
+
+    try {
+        const agentName = runner.details?.agentName || 'Agent';
+        const [session, activitiesRes] = await Promise.all([
+            getSession(agentName, snapshot.sessionId).catch(() => null),
+            listActivities(agentName, snapshot.sessionId, 100).catch(() => null),
+        ]);
+        res.status(200).json({ runner: snapshot, session, activities: activitiesRes?.activities || [] });
+    } catch (e) {
+        res.status(200).json({ runner: snapshot, session: null, activities: [], error: e.message });
+    }
+});
+
+router.post('/runners/:runnerId/stop', apiRateLimiter, requirePermission('runners.stop'), requireCriticalConfirmation, async (req, res) => {
+    const ok = await controlCenter.stopRunner(req.params.runnerId);
+    if (!ok) return res.status(404).json({ error: 'Runner not found.' });
+    await audit(req, 'runner.stop', req.params.runnerId);
+    res.status(200).json({ ok: true, runnerId: req.params.runnerId });
+});
 
 router.get('/status', apiRateLimiter, requireDashboardAuth, async (req, res) => {
     let payload = await controlCenter.getStatus();

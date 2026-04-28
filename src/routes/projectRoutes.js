@@ -26,6 +26,27 @@ async function getProjectOrFail(projectId, res) {
     return project;
 }
 
+router.get('/config', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+    res.status(200).json({ projects: await listProjectsConfig() });
+});
+
+router.post('/config', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
+    const { id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt } = req.body || {};
+    if (!id?.trim() || !github_repo?.trim()) return res.status(400).json({ error: 'id and github_repo are required.' });
+    try {
+        await upsertProjectConfig({ id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt });
+        const row = await getProjectConfig(id);
+        
+        // Refresh ControlCenter runtime
+        await controlCenter.init();
+        
+        await audit(req, 'project.upsert', id, { github_repo });
+        res.status(200).json({ ok: true, project: row });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
 router.get('/:projectId/detail', apiRateLimiter, async (req, res) => {
     const { projectId } = req.params;
     const project = await controlCenter.getProjectRuntime(projectId);

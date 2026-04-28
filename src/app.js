@@ -12,6 +12,7 @@ import projectRoutes from './routes/projectRoutes.js';
 import agentRoutes from './routes/agentRoutes.js';
 import assignmentRoutes from './routes/assignmentRoutes.js';
 import systemRoutes from './routes/systemRoutes.js';
+import julesRoutes from './routes/julesRoutes.js';
 
 // Helpers & Database
 import { hasAnyDashboardUser } from './auth/dashboardAuth.js';
@@ -57,8 +58,11 @@ app.get('/health', async (req, res) => {
 // Modular API Routes
 app.use('/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
+app.use('/api/projects-config', projectRoutes); // Alias for config routes
 app.use('/api/agents', agentRoutes);
 app.use('/api/assignments', assignmentRoutes);
-app.use('/api', systemRoutes); // For global /status, /metrics, etc.
+app.use('/api/jules', julesRoutes);
+app.use('/api/sessions', julesRoutes); // Alias for historical sessions
+app.use('/api', systemRoutes); 
 
 export default app;
