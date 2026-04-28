@@ -15,9 +15,11 @@ router.get('/sources', apiRateLimiter, requirePermission('projects.add'), async 
     }
 });
 
-router.get('/sources/:sourceId*', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
+// Use regex for wildcard parameters in Express 5 to avoid path-to-regexp v8 strictness
+router.get(/^\/sources\/(.*)/, apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
     try {
-        const data = await getSource('System', req.params.sourceId);
+        const sourceId = req.params[0];
+        const data = await getSource('System', sourceId);
         if (!data) return res.status(404).json({ error: 'Source not found' });
         res.status(200).json(data);
     } catch (err) {
@@ -26,9 +28,9 @@ router.get('/sources/:sourceId*', apiRateLimiter, requirePermission('projects.ad
 });
 
 // Historical Sessions (no runner attached)
-router.get('/sessions/:sessionId*', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+router.get(/^\/sessions\/(.*)/, apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
     try {
-        const sessionId = req.params.sessionId;
+        const sessionId = req.params[0];
         const [session, activitiesRes] = await Promise.all([
             getSession('System', sessionId).catch(() => null),
             listActivities('System', sessionId, 100).catch(() => null),
