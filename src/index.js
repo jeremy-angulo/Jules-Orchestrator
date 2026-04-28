@@ -6,14 +6,18 @@ import { initTables } from './db/database.js';
 
 const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Orchestrator listening on port ${PORT}`);
-});
-
-startWebsiteHealthMonitor();
-
 async function main() {
+  console.log('[Main] Initializing database...');
   await initTables();
+  console.log('[Main] Database ready.');
+
+  // Start the server only AFTER DB is ready
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Orchestrator listening on port ${PORT}`);
+  });
+
+  // Start health monitor
+  startWebsiteHealthMonitor();
 
   if (process.env.BOOTSTRAP_DATA) {
     try {
@@ -23,19 +27,11 @@ async function main() {
       const existingAgents = await listAgents();
       const existingProjects = await listProjectsConfig();
 
-      // Only bootstrap if DB is empty
       if (existingAgents.length === 0 && existingProjects.length === 0) {
         console.log('[Bootstrap] Empty database detected. Importing data from BOOTSTRAP_DATA...');
-        
-        for (const agent of data.agents || []) {
-          await createAgent(agent);
-        }
-        for (const project of data.projects || []) {
-          await upsertProjectConfig(project);
-        }
-        for (const ass of data.assignments || []) {
-          await createAssignment(ass);
-        }
+        for (const agent of data.agents || []) await createAgent(agent);
+        for (const project of data.projects || []) await upsertProjectConfig(project);
+        for (const ass of data.assignments || []) await createAssignment(ass);
         console.log('[Bootstrap] Database populated successfully.');
       }
     } catch (err) {
@@ -53,4 +49,7 @@ async function main() {
   }
 }
 
-main();
+main().catch(err => {
+  console.error('Unhandled fatal error during startup:', err);
+  process.exit(1);
+});

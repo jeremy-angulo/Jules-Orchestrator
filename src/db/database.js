@@ -138,7 +138,7 @@ export async function initTables() {
     )`,
     `CREATE TABLE IF NOT EXISTS service_checks (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      service_id TEXT NOT NULL,
+      service TEXT NOT NULL,
       ok BOOLEAN NOT NULL,
       response_ms INTEGER,
       error_message TEXT,
@@ -159,6 +159,25 @@ export async function initTables() {
       ended_at INTEGER
     )`
   ], "write");
+
+  // Migration: Ensure service_checks table matches the current schema
+  const migrations = [
+    "ALTER TABLE service_checks ADD COLUMN service TEXT",
+    "ALTER TABLE service_checks ADD COLUMN source TEXT",
+    "ALTER TABLE service_checks ADD COLUMN error_message TEXT",
+    "ALTER TABLE agent_sessions ADD COLUMN created_at INTEGER",
+    "ALTER TABLE agent_sessions ADD COLUMN ended_at INTEGER",
+    "ALTER TABLE agent_sessions ADD COLUMN status TEXT DEFAULT 'running'"
+  ];
+
+  for (const sql of migrations) {
+    try {
+      await client.execute(sql);
+      console.log(`[Database] Migration success: ${sql}`);
+    } catch (e) {
+      // Ignore if column already exists
+    }
+  }
 }
 
 // Basic CRUD
@@ -207,29 +226,29 @@ export async function getApiUsageSummary24h() {
 
 // Service checks
 export async function recordServiceCheck(serviceId, ok, { statusCode = 200, responseMs = 0, errorMessage = null, source = 'monitor' } = {}) {
-  await executeWithRetry({ sql: 'INSERT INTO service_checks (service_id, ok, response_ms, error_message, timestamp, source) VALUES (?, ?, ?, ?, ?, ?)', args: [serviceId, ok ? 1 : 0, responseMs, errorMessage, Date.now(), source] });
+  await executeWithRetry({ sql: 'INSERT INTO service_checks (service, ok, response_ms, error_message, timestamp, source) VALUES (?, ?, ?, ?, ?, ?)', args: [serviceId, ok ? 1 : 0, responseMs, errorMessage, Date.now(), source] });
 }
 export async function recordServiceError(serviceId, error, source = 'monitor') {
   await recordServiceCheck(serviceId, false, { errorMessage: String(error), source });
 }
 export async function listServiceChecks(serviceId, limit = 50) {
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM service_checks WHERE service_id = ? ORDER BY id DESC LIMIT ?', args: [serviceId, limit] });
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM service_checks WHERE service = ? ORDER BY id DESC LIMIT ?', args: [serviceId, limit] });
   return rs.rows;
 }
 export async function getServiceErrorSummary(serviceId, hours = 24) {
   const since = Date.now() - hours * 60 * 60 * 1000;
-  const rs = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service_id = ? AND ok = 0 AND timestamp >= ?', args: [serviceId, since] });
+  const rs = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service = ? AND ok = 0 AND timestamp >= ?', args: [serviceId, since] });
   return { serviceId, errors: Number(rs.rows[0].c), windowHours: hours };
 }
 export async function listServiceErrors(serviceId, hours = 24, limit = 50) {
   const since = Date.now() - hours * 60 * 60 * 1000;
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM service_checks WHERE service_id = ? AND ok = 0 AND timestamp >= ? ORDER BY id DESC LIMIT ?', args: [serviceId, since, limit] });
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM service_checks WHERE service = ? AND ok = 0 AND timestamp >= ? ORDER BY id DESC LIMIT ?', args: [serviceId, since, limit] });
   return rs.rows;
 }
 export async function getServiceUptime(serviceId, hours = 24) {
   const since = Date.now() - hours * 60 * 60 * 1000;
-  const total = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service_id = ? AND timestamp >= ?', args: [serviceId, since] });
-  const ok = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service_id = ? AND ok = 1 AND timestamp >= ?', args: [serviceId, since] });
+  const total = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service = ? AND timestamp >= ?', args: [serviceId, since] });
+  const ok = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service = ? AND ok = 1 AND timestamp >= ?', args: [serviceId, since] });
   const count = Number(total.rows[0].c);
   return { uptimePercent: count === 0 ? 100 : (Number(ok.rows[0].c) / count) * 100 };
 }
