@@ -1,6 +1,26 @@
 import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const DB_PATH = process.env.ORCHESTRATOR_DB_PATH || 'orchestrator.db';
+
+// Bootstrap logic: If DB_PATH doesn't exist but a seed.db exists in the app root, copy it.
+// This allows migrating from local/fly to Render by just pushing a seed.db once.
+if (!fs.existsSync(DB_PATH)) {
+  console.log(`[Database] Target database not found at ${DB_PATH}. Checking for seed...`);
+  const dbDir = path.dirname(DB_PATH);
+  if (!fs.existsSync(dbDir) && dbDir !== '.') {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
+  if (fs.existsSync('seed.db')) {
+    console.log('[Database] Found seed.db! Copying to persistent volume...');
+    fs.copyFileSync('seed.db', DB_PATH);
+  } else {
+    console.log('[Database] No seed.db found. Starting with a fresh database.');
+  }
+}
+
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 
