@@ -36,10 +36,6 @@ async function batchWithRetry(stmts, mode, retries = 5, delay = 500) {
   }
 }
 
-// LibSQL/SQLite busy timeout configuration is not directly in createClient options for all drivers
-// but we can try to set it via PRAGMA if the driver supports it after connection.
-// For file-based SQLite, WAL mode is already enabled in initTables.
-
 // Helper to initialize tables
 export async function initTables() {
   await batchWithRetry([
@@ -155,16 +151,17 @@ export async function initTables() {
       project_id TEXT NOT NULL,
       agent_name TEXT NOT NULL,
       status TEXT DEFAULT 'running',
-      created_at INTEGER NOT NULL,
+      started_at INTEGER NOT NULL,
       ended_at INTEGER
     )`
   ], "write");
 
-  // Migration: Ensure service_checks table matches the current schema
+  // Migration: Ensure tables match the expected schema
   const migrations = [
     "ALTER TABLE service_checks ADD COLUMN service TEXT",
     "ALTER TABLE service_checks ADD COLUMN source TEXT",
     "ALTER TABLE service_checks ADD COLUMN error_message TEXT",
+    "ALTER TABLE agent_sessions ADD COLUMN started_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN created_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN ended_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN status TEXT DEFAULT 'running'"
@@ -175,7 +172,7 @@ export async function initTables() {
       await client.execute(sql);
       console.log(`[Database] Migration success: ${sql}`);
     } catch (e) {
-      // Ignore if column already exists
+      // Ignore errors (like column already exists)
     }
   }
 }
@@ -414,16 +411,20 @@ export async function upsertPrompt(pid, name, content, { source = 'manual', isIn
 
 // Sessions
 export async function recordAgentSessionStart({ assignmentId, projectId, agentName, sessionId }) {
-  await executeWithRetry({ sql: 'INSERT INTO agent_sessions (session_id, assignment_id, project_id, agent_name, created_at) VALUES (?, ?, ?, ?, ?)', args: [sessionId, assignmentId, projectId, agentName, Date.now()] });
+  const now = Date.now();
+  await executeWithRetry({ 
+    sql: 'INSERT INTO agent_sessions (session_id, assignment_id, project_id, agent_name, started_at, created_at) VALUES (?, ?, ?, ?, ?, ?)', 
+    args: [sessionId, assignmentId, projectId, agentName, now, now] 
+  });
 }
 export async function recordAgentSessionEnd(sid, status) {
   await executeWithRetry({ sql: 'UPDATE agent_sessions SET status = ?, ended_at = ? WHERE session_id = ?', args: [status, Date.now(), sid] });
 }
 export async function listAgentSessions(pid) {
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY created_at DESC LIMIT 50', args: [pid] });
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 50', args: [pid] });
   return rs.rows;
 }
 export async function getLastAgentSession(aid) {
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM agent_sessions WHERE assignment_id = ? ORDER BY created_at DESC LIMIT 1', args: [aid] });
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM agent_sessions WHERE assignment_id = ? ORDER BY started_at DESC LIMIT 1', args: [aid] });
   return rs.rows[0];
 }
