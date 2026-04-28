@@ -12,12 +12,12 @@ test('token limits are fixed to 100 for primary and 15 for secondary', async () 
       }
     },
     '../src/db/database.js': {
-      getTokenUsage24h: () => 0,
-      getTokenName: () => null
+      getTokenUsage24h: async () => 0,
+      getTokenName: async () => null
     }
   });
 
-  const inventory = getTokenInventory();
+  const inventory = await getTokenInventory();
   assert.equal(inventory.length, 3);
   assert.equal(inventory[0].limit24h, 100);
   assert.equal(inventory[1].limit24h, 15);
@@ -34,12 +34,12 @@ test('token labels fallback to Token N when no custom name exists', async () => 
       }
     },
     '../src/db/database.js': {
-      getTokenUsage24h: () => 3,
-      getTokenName: () => null
+      getTokenUsage24h: async () => 3,
+      getTokenName: async () => null
     }
   });
 
-  const inventory = getTokenInventory();
+  const inventory = await getTokenInventory();
   assert.equal(inventory[0].label, 'Token 1');
   assert.equal(inventory[1].label, 'Token 2');
 });

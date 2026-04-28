@@ -7,19 +7,18 @@ function maskToken(token) {
   return `${token.slice(0, 4)}...${token.slice(-4)}`;
 }
 
-export function getTokenInventory() {
+export async function getTokenInventory() {
   const allTokens = [GLOBAL_CONFIG.JULES_MAIN_TOKEN, ...(GLOBAL_CONFIG.JULES_SECONDARY_TOKENS || [])]
     .map((token) => (token || '').trim())
     .filter(Boolean);
 
-  return allTokens.map((token, index) => {
+  return await Promise.all(allTokens.map(async (token, index) => {
     const id = `key-${index + 1}`;
     const isPrimary = index === 0;
     
-    // Get custom name from database, fallback to "Token 1", "Token 2", etc.
-    const customNameRecord = getTokenName(index);
-    const defaultLabel = `Token ${index + 1}`;
-    const label = customNameRecord?.customName || defaultLabel;
+    const customName = await getTokenName(index);
+    const label = customName || `Token ${index + 1}`;
+    const usage = await getTokenUsage24h(token);
     
     return {
       id,
@@ -28,15 +27,15 @@ export function getTokenInventory() {
       isPrimary,
       configured: true,
       maskedToken: maskToken(token),
-      usage24h: getTokenUsage24h(token),
+      usage24h: usage,
       limit24h: isPrimary ? 100 : 15,
       token
     };
-  });
+  }));
 }
 
-export function getTokenStatusSummary() {
-  const inventory = getTokenInventory();
+export async function getTokenStatusSummary() {
+  const inventory = await getTokenInventory();
   if (inventory.length === 0) {
     return {
       configured: false,
@@ -57,8 +56,8 @@ export function getTokenStatusSummary() {
   };
 }
 
-export function getAvailableToken(agentName, options = {}) {
-  const inventory = getTokenInventory();
+export async function getAvailableToken(agentName, options = {}) {
+  const inventory = await getTokenInventory();
 
   if (inventory.length === 0) {
     throw new Error('JULES_MAIN_TOKEN is not configured.');

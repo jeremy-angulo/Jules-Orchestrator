@@ -26,11 +26,11 @@ test('runBackgroundAgent skips if project locked', async () => {
 
   const { runBackgroundAgent } = await esmock('../src/agents/background.js', {
     '../src/db/database.js': {
-      isProjectLocked: () => {
+      isProjectLocked: async () => {
         isLockedCalled = true;
         return true;
       },
-      decrementTasks: () => { }
+      decrementTasks: async () => { }
     },
     '../src/api/julesClient.js': {
       startAndMonitorSession: async () => {
@@ -66,12 +66,12 @@ test('runBackgroundAgent calls startAndMonitorSession if not locked', async () =
 
   const { runBackgroundAgent } = await esmock('../src/agents/background.js', {
     '../src/db/database.js': {
-      isProjectLocked: () => {
+      isProjectLocked: async () => {
         isLockedCalled = true;
         return false;
       },
-      incrementTasks: () => { incrementCalled = true; },
-      decrementTasks: () => { decrementCalled = true; }
+      incrementTasks: async () => { incrementCalled = true; },
+      decrementTasks: async () => { decrementCalled = true; }
     },
     '../src/api/julesClient.js': {
       startAndMonitorSession: async (prompt, title, proj) => {
@@ -112,12 +112,12 @@ test('runBackgroundAgent calls startAndMonitorSession if not locked, and decreme
 
   const { runBackgroundAgent } = await esmock('../src/agents/background.js', {
     '../src/db/database.js': {
-      isProjectLocked: () => {
+      isProjectLocked: async () => {
         isLockedCalled = true;
         return false;
       },
-      incrementTasks: () => { incrementCalledCount++; },
-      decrementTasks: () => { decrementCalledCount++; }
+      incrementTasks: async () => { incrementCalledCount++; },
+      decrementTasks: async () => { decrementCalledCount++; }
     },
     '../src/api/julesClient.js': {
       startAndMonitorSession: async () => {

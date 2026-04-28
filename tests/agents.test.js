@@ -48,7 +48,7 @@ test('scheduleBuildAndMergePipeline - executes callback logic', async (t) => {
     }
   };
 
-  db.initProjectState('test-pipeline-1');
+  await db.initProjectState('test-pipeline-1');
 
   // To test the internal logic, we replace the global fetch that julesClient and githubClient use
   let fetchCallCount = 0;
@@ -90,7 +90,7 @@ test('scheduleBuildAndMergePipeline - skips PR if session fails', async (t) => {
     }
   };
 
-  db.initProjectState('test-pipeline-2');
+  await db.initProjectState('test-pipeline-2');
 
   let fetchCallCount = 0;
   t.mock.method(globalThis, 'fetch', async () => {

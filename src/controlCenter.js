@@ -85,54 +85,8 @@ export class ControlCenter {
     out(`[ControlCenter] ${message}`, meta);
   }
 
-  addProject(project) {
-    if (this.projectById.has(project.id)) {
-      throw new Error(`Project already exists: ${project.id}`);
-    }
-    this.projects.push(project);
-    this.projectById.set(project.id, project);
-    initProjectState(project.id);
-    this.log('info', 'Project added dynamically', { projectId: project.id, repo: project.githubRepo });
-
-    // Automatically start pipeline scheduler if configured
-    if (project.buildAndMergePipeline) {
-        const task = scheduleBuildAndMergePipeline(project, {
-          onTimeout: async (pId) => {
-            this.log('warn', 'Scheduled pipeline timeout reached, stopping all other runners for project', { projectId: pId });
-            for (const r of this.runners.values()) {
-              if (r.projectId === pId && r.status === 'running') {
-                this.stopRunner(r.id);
-              }
-            }
-          }
-        });
-        this.systemRunners.perProjectPipelines.set(project.id, task);
-    }
-    return true;
-  }
-
-  removeProject(projectId) {
-    const project = this.projectById.get(projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
-
-    // Stop all runners for this project
-    this.stopBy(projectId, 'all');
-
-    // Remove scheduled pipeline if exists
-    const pipelineTask = this.systemRunners.perProjectPipelines.get(projectId);
-    if (pipelineTask) {
-      clearInterval(pipelineTask);
-      this.systemRunners.perProjectPipelines.delete(projectId);
-    }
-
-    // Remove from collections
-    this.projects = this.projects.filter(p => p.id !== projectId);
-    this.projectById.delete(projectId);
-
-    this.log('info', 'Project removed', { projectId, repo: project.githubRepo });
-    return true;
+  async initProjectInDB(project) {
+    await initProjectState(project.id);
   }
 
   getProject(projectId) {
@@ -153,10 +107,10 @@ export class ControlCenter {
     };
   }
 
-  getProjectRuntime(projectId) {
+  async getProjectRuntime(projectId) {
     const inMemory = this.projectById.get(projectId);
     if (inMemory) return inMemory;
-    const dbRow = getProjectConfig(projectId);
+    const dbRow = await getProjectConfig(projectId);
     if (dbRow) return this._buildRuntimeProject(dbRow);
     return null;
   }
@@ -165,7 +119,7 @@ export class ControlCenter {
     this.projects = [];
     this.projectById = new Map();
 
-    const dbProjects = listProjectsConfig();
+    const dbProjects = await listProjectsConfig();
     for (const dbRow of dbProjects) {
       const runtime = this._buildRuntimeProject(dbRow);
       this.projects.push(runtime);
@@ -174,26 +128,15 @@ export class ControlCenter {
     }
   }
 
-  _buildProjectReadiness(project) {
+  async _buildProjectReadiness(project) {
     const tokenStatus = getTokenStatusSummary();
-    const validPrompts = (project.backgroundPrompts || []).filter((prompt) => typeof prompt === 'string' && prompt.trim().length > 0);
-    const hasGitHubToken = !!(project.githubToken || '').trim();
+    const hasGitHubToken = !!(project.githubToken || '').trim() || !!process.env.GITHUB_TOKEN;
     const hasJulesToken = tokenStatus.configured;
-    const readyForBackground = hasGitHubToken && hasJulesToken && validPrompts.length > 0;
-    const readyForIssue = hasGitHubToken && hasJulesToken;
-
-    const reasons = [];
-    if (!hasGitHubToken) reasons.push('GITHUB_TOKEN missing');
-    if (!hasJulesToken) reasons.push('Jules API key missing');
-    if (validPrompts.length === 0) reasons.push('No valid background prompt loaded');
-
+    
     return {
       hasGitHubToken,
       hasJulesToken,
-      validBackgroundPrompts: validPrompts.length,
-      readyForBackground,
-      readyForIssue,
-      reasons
+      ready: hasGitHubToken && hasJulesToken
     };
   }
 
@@ -293,22 +236,7 @@ export class ControlCenter {
     }
   }
 
-  setRunnerKillAfter(runnerId, timeoutMs) {
-    const runner = this.runners.get(runnerId);
-    if (!runner) {
-      return false;
-    }
-    const safeTimeout = Math.max(1000, Number(timeoutMs) || 0);
-    runner.killAt = Date.now() + safeTimeout;
-    runner.details = {
-      ...runner.details,
-      killAfterMs: safeTimeout
-    };
-    this.log('info', 'Runner kill timer set', { runnerId, timeoutMs: safeTimeout });
-    return true;
-  }
-
-  stopRunner(runnerId) {
+  async stopRunner(runnerId) {
     const runner = this.runners.get(runnerId);
     if (!runner) {
       return false;
@@ -327,12 +255,12 @@ export class ControlCenter {
     return true;
   }
 
-  stopBy(projectId, type = null) {
+  async stopBy(projectId, type = null) {
     let count = 0;
     for (const runner of this.runners.values()) {
       if (runner.projectId !== projectId) continue;
       if (type && runner.type !== type) continue;
-      if (this.stopRunner(runner.id)) {
+      if (await this.stopRunner(runner.id)) {
         count += 1;
       }
     }
@@ -357,68 +285,8 @@ export class ControlCenter {
     }
   }
 
-  async startConfiguredBackground(projectId) {
-    const project = this.getProject(projectId);
-    if (!project) {
-      throw new Error(`Unknown project: ${projectId}`);
-    }
-    const prompts = (project.backgroundPrompts || [])
-      .map((prompt, index) => ({ prompt, index }))
-      .filter((entry) => typeof entry.prompt === 'string' && entry.prompt.trim().length > 0);
-
-    if (prompts.length === 0) {
-      return [];
-    }
-
-    const started = [];
-    for (const entry of prompts) {
-      const index = entry.index;
-      const prompt = entry.prompt;
-      const runnerId = this.makeRunnerId(projectId, 'background', String(index));
-      if (this.runners.has(runnerId)) {
-        continue;
-      }
-      const runner = this._createRunner({
-        id: runnerId,
-        projectId,
-        type: 'background',
-        mode: 'loop',
-        label: `Background ${index}`,
-        intervalMs: DEFAULT_BG_PAUSE_MS,
-        details: { promptIndex: index }
-      });
-      runner.promise = this._runLoop(
-        runner,
-        async () => {
-          if (await isProjectLocked(projectId)) {
-            await sleepInterruptible(LOCK_WAIT_MS, () => runner.shouldStop);
-            return;
-          }
-
-          await incrementTasks(projectId);
-          let mustDecrement = true;
-          try {
-            await startAndMonitorSession(prompt, `Background Agent - ${index}`, project, {
-              shouldStop: () => runner.shouldStop,
-              preferredTokenId: runner.details?.preferredTokenId || null,
-              onSessionCreated: (id) => { runner.sessionId = id; }
-            });
-          } finally {
-            if (mustDecrement) {
-              await decrementTasks(projectId);
-            }
-          }
-        },
-        DEFAULT_BG_PAUSE_MS
-      );
-      started.push(runnerId);
-    }
-
-    return started;
-  }
-
   async runBackgroundOnce(projectId, prompt, label = 'Background Manual', options = {}) {
-    const project = this.getProject(projectId);
+    const project = await this.getProjectRuntime(projectId);
     if (!project) {
       throw new Error(`Unknown project: ${projectId}`);
     }
@@ -454,117 +322,8 @@ export class ControlCenter {
     return runnerId;
   }
 
-  async startIssueLoop(projectId) {
-    const project = this.getProject(projectId);
-    if (!project) {
-      throw new Error(`Unknown project: ${projectId}`);
-    }
-    const runnerId = this.makeRunnerId(projectId, 'issue');
-    if (this.runners.has(runnerId)) {
-      return runnerId;
-    }
-
-    const runner = this._createRunner({
-      id: runnerId,
-      projectId,
-      type: 'issue',
-      mode: 'loop',
-      label: 'Issue Agent',
-      intervalMs: 30000
-    });
-
-    runner.promise = this._runLoop(
-      runner,
-      async () => {
-        if (await isProjectLocked(projectId)) {
-          await sleepInterruptible(30000, () => runner.shouldStop);
-          return;
-        }
-
-        const issue = await getNextGitHubIssue(project);
-        if (!issue) {
-          return;
-        }
-
-        await lockProject(projectId);
-        await incrementTasks(projectId);
-        try {
-          while ((await getActiveTasks(projectId)) > 1 && !runner.shouldStop) {
-            await sleepInterruptible(15000, () => runner.shouldStop);
-          }
-
-          if (runner.shouldStop) {
-            return;
-          }
-
-          await mergeOpenPRs(project);
-          const instruction = formatIssueInstruction(issue);
-          const success = await startAndMonitorSession(instruction, 'Issue Agent', project, {
-            shouldStop: () => runner.shouldStop,
-            onSessionCreated: (id) => { runner.sessionId = id; }
-          });
-          if (success) {
-            await closeGitHubIssue(project, issue.number);
-          }
-        } finally {
-          await decrementTasks(projectId);
-          await unlockProject(projectId);
-        }
-      },
-      30000
-    );
-
-    return runnerId;
-  }
-
-  async runIssueOnce(projectId) {
-    const project = this.getProject(projectId);
-    if (!project) {
-      throw new Error(`Unknown project: ${projectId}`);
-    }
-
-    const issue = await getNextGitHubIssue(project);
-    if (!issue) {
-      return { started: false, message: 'No open issue available.' };
-    }
-
-    const runnerId = this.makeRunnerId(projectId, 'manual-issue', Date.now().toString());
-    const runner = this._createRunner({
-      id: runnerId,
-      projectId,
-      type: 'manual-issue',
-      mode: 'once',
-      label: `Manual Issue #${issue.number}`,
-      details: { issueNumber: issue.number }
-    });
-    runner.keepInRegistryAfterStop = true;
-
-    runner.promise = (async () => {
-      await lockProject(projectId);
-      await incrementTasks(projectId);
-      try {
-        const instruction = formatIssueInstruction(issue);
-        const success = await startAndMonitorSession(instruction, 'Issue Agent', project, {
-          shouldStop: () => runner.shouldStop
-        });
-        if (success) {
-          await closeGitHubIssue(project, issue.number);
-        }
-        runner.iterations = 1;
-        this._markRunnerStopped(runner, 'completed');
-      } catch (err) {
-        this._markRunnerStopped(runner, 'failed', err);
-      } finally {
-        await decrementTasks(projectId);
-        await unlockProject(projectId);
-      }
-    })();
-
-    return { started: true, runnerId, issueNumber: issue.number };
-  }
-
   async runPipelineNow(projectId) {
-    const project = this.getProject(projectId);
+    const project = await this.getProjectRuntime(projectId);
     if (!project) {
       throw new Error(`Unknown project: ${projectId}`);
     }
@@ -585,15 +344,7 @@ export class ControlCenter {
     runner.promise = (async () => {
       try {
         await runBuildAndMergePipelineOnce(project, { 
-          shouldStop: () => runner.shouldStop,
-          onTimeout: async (pId) => {
-            this.log('warn', 'Pipeline timeout reached, stopping all other runners for project', { projectId: pId });
-            for (const r of this.runners.values()) {
-              if (r.projectId === pId && r.id !== runner.id && r.status === 'running') {
-                this.stopRunner(r.id);
-              }
-            }
-          }
+          shouldStop: () => runner.shouldStop
         });
         runner.iterations = 1;
         this._markRunnerStopped(runner, 'completed');
@@ -606,7 +357,7 @@ export class ControlCenter {
   }
 
   async startCustomLoop(projectId, prompt, label = 'Custom Loop', intervalMs = 120000, options = {}) {
-    const project = this.getProject(projectId);
+    const project = await this.getProjectRuntime(projectId);
     if (!project) {
       throw new Error(`Unknown project: ${projectId}`);
     }
@@ -649,7 +400,7 @@ export class ControlCenter {
   }
 
   async setProjectLock(projectId, locked) {
-    if (!this.getProject(projectId)) {
+    if (!await this.getProjectRuntime(projectId)) {
       throw new Error(`Unknown project: ${projectId}`);
     }
     if (locked) {
@@ -660,7 +411,7 @@ export class ControlCenter {
   }
 
   async resetProjectTasks(projectId) {
-    if (!this.getProject(projectId)) {
+    if (!await this.getProjectRuntime(projectId)) {
       throw new Error(`Unknown project: ${projectId}`);
     }
     await setActiveTasks(projectId, 0);
@@ -668,7 +419,7 @@ export class ControlCenter {
 
   async stopAll() {
     for (const runnerId of Array.from(this.runners.keys())) {
-      this.stopRunner(runnerId);
+      await this.stopRunner(runnerId);
     }
   }
 
@@ -678,7 +429,6 @@ export class ControlCenter {
       this.updateProjectStats(project.id).catch(() => {});
     }
 
-    // Periodically update stats (every 5 mins)
     if (!this.statsInterval) {
       this.statsInterval = setInterval(() => {
         for (const project of this.projects) {
@@ -690,86 +440,24 @@ export class ControlCenter {
     for (const project of this.projects) {
       if (!project.buildAndMergePipeline) continue;
       if (this.systemRunners.perProjectPipelines.has(project.id)) continue;
-      const task = scheduleBuildAndMergePipeline(project, {
-        onTimeout: async (pId) => {
-          this.log('warn', 'Scheduled pipeline timeout reached, stopping all other runners for project', { projectId: pId });
-          for (const r of this.runners.values()) {
-            if (r.projectId === pId && r.status === 'running') {
-              this.stopRunner(r.id);
-            }
-          }
-        }
-      });
+      const task = scheduleBuildAndMergePipeline(project);
       this.systemRunners.perProjectPipelines.set(project.id, task);
       this.log('info', 'Project pipeline scheduler started', { projectId: project.id });
     }
   }
 
-  stopSchedulers() {
+  async stopSchedulers() {
     for (const [projectId, task] of this.systemRunners.perProjectPipelines.entries()) {
       task.stop();
       this.systemRunners.perProjectPipelines.delete(projectId);
     }
   }
 
-  stopProjectPipelineScheduler(projectId) {
-    const task = this.systemRunners.perProjectPipelines.get(projectId);
-    if (!task) {
-      return false;
-    }
-    task.stop();
-    this.systemRunners.perProjectPipelines.delete(projectId);
-    this.log('info', 'Project pipeline scheduler stopped', { projectId });
-    return true;
-  }
-
-  startProjectPipelineScheduler(projectId) {
-    const project = this.getProject(projectId);
-    if (!project || !project.buildAndMergePipeline) {
-      return false;
-    }
-    if (this.systemRunners.perProjectPipelines.has(projectId)) {
-      return false;
-    }
-    const task = scheduleBuildAndMergePipeline(project);
-    this.systemRunners.perProjectPipelines.set(projectId, task);
-    this.log('info', 'Project pipeline scheduler started', { projectId });
-    return true;
-  }
-
-  async startDefaultLoops() {
-    for (const project of this.projects) {
-      if (!project.githubRepo) continue;
-      const readiness = this._buildProjectReadiness(project);
-      if (readiness.readyForBackground) {
-        await this.startConfiguredBackground(project.id);
-      } else {
-        this.log('info', 'Background loops skipped (project not ready)', {
-          projectId: project.id,
-          reasons: readiness.reasons
-        });
-      }
-
-      if (readiness.readyForIssue) {
-        await this.startIssueLoop(project.id);
-      } else {
-        this.log('info', 'Issue loop skipped (project not ready)', {
-          projectId: project.id,
-          reasons: readiness.reasons
-        });
-      }
-    }
-  }
-
   async startAll() {
     await this.init();
-    await this.startDefaultLoops();
     await this.startSchedulers();
+    await this.startAllAssignments();
   }
-
-  // =========================================================
-  // Agent Assignment Runners
-  // =========================================================
 
   async runAgentOnce(projectId, agentId, options = {}) {
     let prompt = '';
@@ -779,13 +467,13 @@ export class ControlCenter {
       prompt = options.instructions || '';
       agentName = 'Custom Agent';
     } else {
-      const agent = getAgent(agentId);
+      const agent = await getAgent(agentId);
       if (!agent) throw new Error(`Agent ${agentId} not found`);
       prompt = agent.prompt;
       agentName = agent.name;
     }
 
-    const project = this.getProjectRuntime(projectId);
+    const project = await this.getProjectRuntime(projectId);
     if (!project) throw new Error(`Project ${projectId} not found`);
 
     const runnerId = this.makeRunnerId(projectId, 'agent-once', `${agentId}:${Date.now()}`);
@@ -804,7 +492,8 @@ export class ControlCenter {
       try {
         await startAndMonitorSession(prompt, agentName, project, { 
           shouldStop: () => runner.shouldStop,
-          media: options.media 
+          media: options.media,
+          onSessionCreated: (id) => { runner.sessionId = id; }
         });
         runner.iterations = 1;
         this._markRunnerStopped(runner, 'completed');
@@ -819,57 +508,23 @@ export class ControlCenter {
   }
 
   async startAssignment(assignmentId) {
-    const assignment = getAssignment(assignmentId);
+    const assignment = await getAssignment(assignmentId);
     if (!assignment || !assignment.enabled) return null;
 
-    const agent = assignment.agent_id ? getAgent(assignment.agent_id) : { name: 'Custom Agent', prompt: assignment.custom_prompt || '' };
+    const agent = assignment.agent_id ? await getAgent(assignment.agent_id) : { name: 'Custom Agent', prompt: assignment.custom_prompt || '' };
     if (!agent) throw new Error(`Agent ${assignment.agent_id} not found`);
-    const project = this.getProjectRuntime(assignment.project_id);
+    const project = await this.getProjectRuntime(assignment.project_id);
     if (!project) throw new Error(`Project ${assignment.project_id} not found`);
 
     if (assignment.mode === 'loop') {
       return this._startAssignmentLoop(assignment, agent, project);
     } else if (assignment.mode === 'scheduled') {
       return this._startAssignmentCron(assignment, agent, project);
-    } else if (assignment.mode === 'one-shot') {
-      return this._startAssignmentOneShot(assignment, agent, project);
     }
     return null;
   }
 
-  _startAssignmentOneShot(assignment, agent, project) {
-    const runnerId = `assignment:${assignment.id}:oneshot`;
-    if (this.runners.has(runnerId)) return runnerId;
-
-    const runner = this._createRunner({
-      id: runnerId,
-      projectId: project.id,
-      type: 'assignment-oneshot',
-      mode: 'once',
-      label: `${agent.name} (one-shot)`,
-      details: { assignmentId: assignment.id, agentId: assignment.id ? agent.id : null, agentName: agent.name }
-    });
-    runner.keepInRegistryAfterStop = true;
-
-    runner.promise = (async () => {
-      try {
-        await incrementTasks(project.id);
-        const prompt = assignment.agent_id ? agent.prompt : assignment.custom_prompt;
-        await startAndMonitorSession(prompt, agent.name, project, { shouldStop: () => runner.shouldStop });
-        recordAssignmentRun(assignment.id);
-        runner.iterations = 1;
-        this._markRunnerStopped(runner, 'completed');
-      } catch (err) {
-        this._markRunnerStopped(runner, 'failed', err);
-      } finally {
-        await decrementTasks(project.id);
-      }
-    })();
-
-    return runnerId;
-  }
-
-  _startAssignmentLoop(assignment, agent, project) {
+  async _startAssignmentLoop(assignment, agent, project) {
     const runnerId = `assignment:${assignment.id}:loop`;
     if (this.runners.has(runnerId)) return runnerId;
 
@@ -887,7 +542,7 @@ export class ControlCenter {
     runner.promise = this._runLoop(
       runner,
       async () => {
-        const current = getAssignment(assignment.id);
+        const current = await getAssignment(assignment.id);
         if (!current || !current.enabled) { runner.shouldStop = true; return; }
         if (await isProjectLocked(project.id)) {
           await sleepInterruptible(LOCK_WAIT_MS, () => runner.shouldStop);
@@ -896,17 +551,17 @@ export class ControlCenter {
         await incrementTasks(project.id);
         try {
           const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
-          await startAndMonitorSession(prompt, agent.name, this.getProjectRuntime(project.id), {
+          await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
             shouldStop: () => runner.shouldStop,
-            onSessionCreated: (sessionId) => {
+            onSessionCreated: async (sessionId) => {
               runner.sessionId = sessionId;
-              recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId });
+              await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId });
             }
           });
-          recordAgentSessionEnd(runner.sessionId, 'completed');
-          recordAssignmentRun(assignment.id);
+          if (runner.sessionId) await recordAgentSessionEnd(runner.sessionId, 'completed');
+          await recordAssignmentRun(assignment.id);
         } catch (err) {
-          if (runner.sessionId) recordAgentSessionEnd(runner.sessionId, 'failed');
+          if (runner.sessionId) await recordAgentSessionEnd(runner.sessionId, 'failed');
           throw err;
         } finally {
           await decrementTasks(project.id);
@@ -918,7 +573,7 @@ export class ControlCenter {
     return runnerId;
   }
 
-  _startAssignmentCron(assignment, agent, project) {
+  async _startAssignmentCron(assignment, agent, project) {
     const runnerId = `assignment:${assignment.id}:cron`;
     if (this.runners.has(runnerId)) return runnerId;
 
@@ -937,17 +592,20 @@ export class ControlCenter {
     });
 
     const task = cron.schedule(schedule, async () => {
-      const current = getAssignment(assignment.id);
+      const current = await getAssignment(assignment.id);
       if (!current || !current.enabled || runner.shouldStop) return;
       runner.lastHeartbeatAt = nowIso();
       runner.iterations += 1;
 
-      const currentProject = this.getProjectRuntime(project.id);
+      const currentProject = await this.getProjectRuntime(project.id);
       await incrementTasks(project.id);
       try {
         const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
-        await startAndMonitorSession(prompt, agent.name, currentProject, { shouldStop: () => runner.shouldStop });
-        recordAssignmentRun(assignment.id);
+        await startAndMonitorSession(prompt, agent.name, currentProject, { 
+          shouldStop: () => runner.shouldStop,
+          onSessionCreated: (id) => { runner.sessionId = id; }
+        });
+        await recordAssignmentRun(assignment.id);
       } finally {
         await decrementTasks(project.id);
       }
@@ -958,12 +616,12 @@ export class ControlCenter {
   }
 
   async runAssignmentOnce(assignmentId) {
-    const assignment = getAssignment(assignmentId);
+    const assignment = await getAssignment(assignmentId);
     if (!assignment) throw new Error(`Assignment ${assignmentId} not found`);
 
-    const agent = getAgent(assignment.agent_id);
+    const agent = await getAgent(assignment.agent_id);
     if (!agent) throw new Error(`Agent ${assignment.agent_id} not found`);
-    const project = this.getProjectRuntime(assignment.project_id);
+    const project = await this.getProjectRuntime(assignment.project_id);
     if (!project) throw new Error(`Project ${assignment.project_id} not found`);
 
     const runnerId = `assignment:${assignmentId}:manual:${Date.now()}`;
@@ -980,8 +638,11 @@ export class ControlCenter {
     runner.promise = (async () => {
       await incrementTasks(project.id);
       try {
-        await startAndMonitorSession(agent.prompt, agent.name, project, { shouldStop: () => runner.shouldStop });
-        recordAssignmentRun(assignmentId);
+        await startAndMonitorSession(agent.prompt, agent.name, project, { 
+          shouldStop: () => runner.shouldStop,
+          onSessionCreated: (id) => { runner.sessionId = id; }
+        });
+        await recordAssignmentRun(assignmentId);
         runner.iterations = 1;
         this._markRunnerStopped(runner, 'completed');
       } catch (err) {
@@ -994,43 +655,23 @@ export class ControlCenter {
     return runnerId;
   }
 
-  stopAssignment(assignmentId) {
-    let stopped = 0;
-    for (const id of [`assignment:${assignmentId}:loop`, `assignment:${assignmentId}:cron`]) {
-      if (this.runners.has(id) && this.stopRunner(id)) stopped++;
-    }
-    return stopped;
-  }
-
-  isAssignmentRunning(assignmentId) {
-    const loopId = `assignment:${assignmentId}:loop`;
-    const cronId = `assignment:${assignmentId}:cron`;
-    const loopRunner = this.runners.get(loopId);
-    const cronRunner = this.runners.get(cronId);
-    return (loopRunner?.status === 'running') || (cronRunner?.status === 'running');
-  }
-
   async startAllAssignments() {
-    const assignments = listAssignments();
+    const assignments = await listAssignments();
     for (const assignment of assignments) {
       if (!assignment.enabled) continue;
       try {
-        // Before starting fresh, check if the last session is still running on Jules
-        if (assignment.mode === 'loop' || assignment.mode === 'scheduled') {
-          const lastSession = getLastAgentSession(assignment.id);
-          if (lastSession && lastSession.status === 'running') {
-            const agent = assignment.agent_id ? (await import('./db/database.js').then(m => m.getAgent(assignment.agent_id))) : { name: 'Custom Agent' };
-            const project = this.getProjectRuntime(assignment.project_id);
+        const lastSession = await getLastAgentSession(assignment.id);
+        if (lastSession && lastSession.status === 'running') {
+            const agent = assignment.agent_id ? await getAgent(assignment.agent_id) : { name: 'Custom Agent' };
+            const project = await this.getProjectRuntime(assignment.project_id);
             const julesState = project ? await getSession(agent?.name || 'Agent', lastSession.session_id).catch(() => null) : null;
             if (julesState && julesState.state !== 'COMPLETED' && julesState.state !== 'FAILED') {
               this.log('info', `Resuming in-flight Jules session for assignment ${assignment.id}`, { sessionId: lastSession.session_id, state: julesState.state });
               this._resumeSessionForAssignment(assignment, lastSession, agent);
               continue;
             } else {
-              // Session ended while we were offline — mark it
-              recordAgentSessionEnd(lastSession.session_id, julesState?.state === 'COMPLETED' ? 'completed' : 'failed');
+              await recordAgentSessionEnd(lastSession.session_id, julesState?.state === 'COMPLETED' ? 'completed' : 'failed');
             }
-          }
         }
         await this.startAssignment(assignment.id);
       } catch (err) {
@@ -1039,8 +680,8 @@ export class ControlCenter {
     }
   }
 
-  _resumeSessionForAssignment(assignment, sessionRecord, agent) {
-    const project = this.getProjectRuntime(assignment.project_id);
+  async _resumeSessionForAssignment(assignment, sessionRecord, agent) {
+    const project = await this.getProjectRuntime(assignment.project_id);
     if (!project) return;
     const agentName = agent?.name || 'Agent';
     const runnerId = `assignment:${assignment.id}:resume`;
@@ -1060,26 +701,25 @@ export class ControlCenter {
       try {
         await incrementTasks(project.id);
         const result = await monitorExistingSession(sessionRecord.session_id, agentName, project, { shouldStop: () => runner.shouldStop });
-        recordAgentSessionEnd(sessionRecord.session_id, result ? 'completed' : 'failed');
-        recordAssignmentRun(assignment.id);
+        await recordAgentSessionEnd(sessionRecord.session_id, result ? 'completed' : 'failed');
+        await recordAssignmentRun(assignment.id);
         this._markRunnerStopped(runner, 'completed');
       } catch (err) {
-        recordAgentSessionEnd(sessionRecord.session_id, 'failed');
+        await recordAgentSessionEnd(sessionRecord.session_id, 'failed');
         this._markRunnerStopped(runner, 'failed', err);
       } finally {
         await decrementTasks(project.id);
-        // After resuming, start the normal loop
         this.startAssignment(assignment.id).catch(() => {});
       }
     })();
   }
 
-  getStatus() {
-    const states = getAllProjectStates();
-    const usage = getApiUsageSummary24h();
+  async getStatus() {
+    const states = await getAllProjectStates();
+    const usage = await getApiUsageSummary24h();
 
-    const projects = this.projects.map((project) => {
-      const readiness = this._buildProjectReadiness(project);
+    const projects = [];
+    for (const project of this.projects) {
       const state = states.find((s) => s.projectId === project.id) || {
         projectId: project.id,
         is_locked_for_daily: false,
@@ -1088,20 +728,16 @@ export class ControlCenter {
       const stats = this.projectStats.get(project.id) || { openPRCount: 0 };
       const totalAgentsLaunched = Array.from(this.runners.values()).filter(r => r.projectId === project.id).length;
 
-      return {
+      projects.push({
         id: project.id,
         githubRepo: project.githubRepo,
         githubBranch: project.githubBranch,
-        hasPipeline: !!project.buildAndMergePipeline,
-        backgroundPromptCount: Array.isArray(project.backgroundPrompts) ? project.backgroundPrompts.length : 0,
-        validBackgroundPromptCount: readiness.validBackgroundPrompts,
         locked: state.is_locked_for_daily,
         activeTasks: state.active_tasks,
         openPRCount: stats.openPRCount,
-        totalAgentsLaunched,
-        readiness
-      };
-    });
+        totalAgentsLaunched
+      });
+    }
 
     const tokenStatus = getTokenStatusSummary();
 

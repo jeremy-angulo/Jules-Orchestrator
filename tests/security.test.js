@@ -9,12 +9,12 @@ test('Manual verification of src/app.js middleware logic', async (t) => {
     // we use a slightly more robust way to extract and test the middleware.
     // We will extract the functions and their surrounding context.
 
-    const appJsContent = readFileSync(join(process.cwd(), 'src/app.js'), 'utf8');
+    const middlewareContent = readFileSync(join(process.cwd(), 'src/middleware/securityMiddleware.js'), 'utf8');
 
     const extractFunction = (name) => {
         const regex = new RegExp(`export const ${name} = \\(req, res, next\\) => \\{([\\s\\S]*?)\\};`);
-        const match = appJsContent.match(regex);
-        if (!match) throw new Error(`Could not find ${name} in src/app.js`);
+        const match = middlewareContent.match(regex);
+        if (!match) throw new Error(`Could not find ${name} in securityMiddleware.js`);
         return new Function('req', 'res', 'next', match[1]);
     };
 
@@ -22,8 +22,8 @@ test('Manual verification of src/app.js middleware logic', async (t) => {
     const strictCors = extractFunction('strictCors');
 
     // For rateLimiter, we need the rateLimitMap state
-    const rateLimiterMatch = appJsContent.match(/export const rateLimiter = \(req, res, next\) => \{([\s\S]*?)\};/);
-    if (!rateLimiterMatch) throw new Error('Could not find rateLimiter in src/app.js');
+    const rateLimiterMatch = middlewareContent.match(/export const rateLimiter = \(req, res, next\) => \{([\s\S]*?)\};/);
+    if (!rateLimiterMatch) throw new Error('Could not find rateLimiter in securityMiddleware.js');
     const rateLimiterFactory = new Function('return (() => { const rateLimitMap = new Map(); return (req, res, next) => {' + rateLimiterMatch[1] + '}; })()');
     const rateLimiter = rateLimiterFactory();
 

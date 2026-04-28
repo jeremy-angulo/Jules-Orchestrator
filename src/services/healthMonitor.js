@@ -29,13 +29,13 @@ async function probeWebsite(url, timeoutMs) {
     const responseMs = Date.now() - startedAt;
     const ok = response.ok;
 
-    recordServiceCheck('website', ok, {
+    await recordServiceCheck('website', ok, {
       statusCode: response.status,
       responseMs
     });
 
     if (!ok) {
-      recordServiceError('website', `Website status ${response.status}`, {
+      await recordServiceError('website', `Website status ${response.status}`, {
         code: String(response.status),
         url,
         statusCode: response.status,
@@ -44,11 +44,11 @@ async function probeWebsite(url, timeoutMs) {
     }
   } catch (error) {
     const responseMs = Date.now() - startedAt;
-    recordServiceCheck('website', false, {
+    await recordServiceCheck('website', false, {
       statusCode: null,
       responseMs
     });
-    recordServiceError('website', 'Website check failed', {
+    await recordServiceError('website', 'Website check failed', {
       code: error?.name || 'NETWORK_ERROR',
       url,
       responseMs,

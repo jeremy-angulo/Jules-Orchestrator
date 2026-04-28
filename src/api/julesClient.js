@@ -23,10 +23,10 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     }
   }
   // Use dynamic token logic via tokenRotation.js
-  const token = getAvailableToken(agentName, requestOptions);
+  const token = await getAvailableToken(agentName, requestOptions);
   // Track usage for sessions creation / messages
   if (method === 'POST' && (endpoint === '/sessions' || endpoint.includes(':sendMessage'))) {
-    recordApiCall(token, agentName);
+    await recordApiCall(token, agentName);
   }
   const options = {
     method,

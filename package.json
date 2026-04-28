@@ -9,6 +9,7 @@
     "test:screenshots": "node tests/screenshot-pages.test.js"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.3",
     "better-sqlite3": "^12.8.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
