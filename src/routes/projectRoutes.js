@@ -96,9 +96,13 @@ router.get('/:projectId/sessions', apiRateLimiter, requirePermission('dashboard.
 });
 
 router.get('/:projectId/assignments', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
-    const assignments = await listAssignments(req.params.projectId);
-    const enriched = assignments.map(a => ({ ...a, running: controlCenter.isAssignmentRunning(a.id) }));
-    res.status(200).json({ assignments: enriched });
+    try {
+        const assignments = await listAssignments(req.params.projectId);
+        const enriched = assignments.map(a => ({ ...a, running: controlCenter.isAssignmentRunning(a.id) }));
+        res.status(200).json({ assignments: enriched });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 router.post('/:projectId/lock', apiRateLimiter, requirePermission('project.lock'), requireCriticalConfirmation, async (req, res) => {
