@@ -15,7 +15,7 @@ router.get('/sources', apiRateLimiter, requirePermission('projects.add'), async 
     }
 });
 
-router.get('/sources/:sourceId(*)', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
+router.get('/sources/:sourceId*', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
     try {
         const data = await getSource('System', req.params.sourceId);
         if (!data) return res.status(404).json({ error: 'Source not found' });
@@ -26,7 +26,7 @@ router.get('/sources/:sourceId(*)', apiRateLimiter, requirePermission('projects.
 });
 
 // Historical Sessions (no runner attached)
-router.get('/sessions/:sessionId(*)', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+router.get('/sessions/:sessionId*', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
     try {
         const sessionId = req.params.sessionId;
         const [session, activitiesRes] = await Promise.all([
