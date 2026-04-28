@@ -255,6 +255,22 @@ export class ControlCenter {
     return true;
   }
 
+  isAssignmentRunning(assignmentId) {
+    const loopId = `assignment:${assignmentId}:loop`;
+    const cronId = `assignment:${assignmentId}:cron`;
+    const resumeId = `assignment:${assignmentId}:resume`;
+    return this.runners.has(loopId) || this.runners.has(cronId) || this.runners.has(resumeId);
+  }
+
+  async stopAssignment(assignmentId) {
+    const loopId = `assignment:${assignmentId}:loop`;
+    const cronId = `assignment:${assignmentId}:cron`;
+    const resumeId = `assignment:${assignmentId}:resume`;
+    await this.stopRunner(loopId);
+    await this.stopRunner(cronId);
+    await this.stopRunner(resumeId);
+  }
+
   async stopBy(projectId, type = null) {
     let count = 0;
     for (const runner of this.runners.values()) {

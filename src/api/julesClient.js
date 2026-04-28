@@ -38,7 +38,9 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
   }
   try {
     const startedAt = Date.now();
-    console.log(`[DEBUG] julesAPI: ${method} ${url}`);
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[DEBUG] julesAPI: ${method} ${url}`);
+    }
     const res = await fetch(url, options);
     const responseMs = Date.now() - startedAt;
     recordServiceCheck('jules_api', res.ok, {
@@ -91,7 +93,9 @@ export async function listSources(agentName, pageSize, pageToken, filter) {
 }
 export async function getSource(agentName, sourceId) {
   const safeId = sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`;
-  console.log(`[DEBUG] getSource: agentName=${agentName}, sourceId=${sourceId}, safeId=${safeId}`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[DEBUG] getSource: agentName=${agentName}, sourceId=${sourceId}, safeId=${safeId}`);
+  }
   return julesAPI(agentName, `/${safeId}`);
 }
 // ==========================================

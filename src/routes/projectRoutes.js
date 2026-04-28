@@ -5,7 +5,14 @@ import { mergeOpenPRs } from '../api/githubClient.js';
 import { getCachedPRs, invalidatePRCache } from '../services/githubService.js';
 import { apiRateLimiter } from '../middleware/securityMiddleware.js';
 import { requirePermission, requireCriticalConfirmation, audit } from '../middleware/authMiddleware.js';
-import { listAgentSessions, upsertProjectConfig, getProjectConfig, deleteProjectConfig, deleteAssignmentsByProject } from '../db/database.js';
+import { 
+    listAgentSessions, 
+    upsertProjectConfig, 
+    getProjectConfig, 
+    deleteProjectConfig, 
+    deleteAssignmentsByProject,
+    listAssignments
+} from '../db/database.js';
 import { mergePRWithResult, closePR } from '../api/githubClient.js';
 
 const router = express.Router();
@@ -86,6 +93,12 @@ router.post('/add', apiRateLimiter, requirePermission('projects.add'), async (re
 router.get('/:projectId/sessions', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
     const sessions = await listAgentSessions(req.params.projectId);
     res.status(200).json({ sessions });
+});
+
+router.get('/:projectId/assignments', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+    const assignments = await listAssignments(req.params.projectId);
+    const enriched = assignments.map(a => ({ ...a, running: controlCenter.isAssignmentRunning(a.id) }));
+    res.status(200).json({ assignments: enriched });
 });
 
 router.post('/:projectId/lock', apiRateLimiter, requirePermission('project.lock'), requireCriticalConfirmation, async (req, res) => {
