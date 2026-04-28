@@ -90,15 +90,15 @@ test('Manual verification of src/app.js middleware logic', async (t) => {
     };
 
     // Test successful requests within limit
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 60; i++) {
         rateLimiter(rateReq, rateRes, rateNext);
     }
-    assert.strictEqual(nextCalledCount, 5);
+    assert.strictEqual(nextCalledCount, 60);
     assert.strictEqual(lastStatusCode, null);
 
     // Test request exceeding limit
     rateLimiter(rateReq, rateRes, rateNext);
-    assert.strictEqual(nextCalledCount, 5);
+    assert.strictEqual(nextCalledCount, 60);
     assert.strictEqual(lastStatusCode, 429);
     assert.strictEqual(lastBody, 'Too many requests, please try again later.');
     assert.ok(lastHeaders['Retry-After'] !== undefined);

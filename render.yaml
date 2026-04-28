@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: jules-orchestrator
+    runtime: docker
+    plan: free # or starter
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: ORCHESTRATOR_DB_PATH
+        value: /var/lib/orchestrator/data/orchestrator.db
+      - key: JULES_MAIN_TOKEN
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+    disk:
+      name: orchestrator-data
+      mountPath: /var/lib/orchestrator/data
+      sizeGB: 1

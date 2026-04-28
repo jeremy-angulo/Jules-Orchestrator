@@ -30,7 +30,6 @@ async function waitForServer(url, timeoutMs = 20000) {
 async function fillAndSubmitAuth(page) {
   await page.fill('#email', ADMIN_EMAIL);
   await page.fill('#password', ADMIN_PASSWORD);
-  await page.fill('#mfaCode', '');
   await page.click('#submitBtn');
 }
 
