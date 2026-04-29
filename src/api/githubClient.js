@@ -1,3 +1,4 @@
+import { log } from "../utils/logger.js";
 import { sleep } from '../utils/helpers.js';
 import { recordServiceCheck, recordServiceError } from '../db/database.js';
 
@@ -45,13 +46,13 @@ export async function getNextGitHubIssue(project) {
     }, 'get_next_issue');
     if (!res.ok) {
         const errorText = await res.text();
-        console.error(`[${project.id} - GitHub] API Error fetching issues: ${res.status} ${res.statusText} - ${errorText}`);
+        log("error", `[${project.id} - GitHub] API Error fetching issues: ${res.status} ${res.statusText} - ${errorText}`);
         return null;
     }
     const issues = await res.json();
     return issues.find(i => !i.pull_request) || null;
   } catch (error) {
-    console.error(`[${project.id} - GitHub] Network Error fetching issues:`, error);
+    log("error", `[${project.id} - GitHub] Network Error fetching issues:`, error);
     return null;
   }
 }
@@ -63,10 +64,10 @@ export async function closeGitHubIssue(project, issueNumber) {
             body: JSON.stringify({ state: 'closed' })
     }, 'close_issue');
         if (!res.ok) {
-             console.error(`[${project.id} - GitHub] API Error closing issue #${issueNumber}: ${res.status} ${res.statusText}`);
+             log("error", `[${project.id} - GitHub] API Error closing issue #${issueNumber}: ${res.status} ${res.statusText}`);
         }
     } catch (error) {
-        console.error(`[${project.id} - GitHub] Network Error closing issue #${issueNumber}:`, error);
+        log("error", `[${project.id} - GitHub] Network Error closing issue #${issueNumber}:`, error);
     }
 }
 export async function checkAndMergePR(project, prNumber) {
@@ -85,13 +86,13 @@ export async function checkAndMergePR(project, prNumber) {
         }
       }, 'get_pr_status');
       if (!getRes.ok) {
-        console.error(`[${project.id} - PR] ❌ Erreur API GitHub lors de la récupération de la PR #${prNumber}: ${getRes.status} ${getRes.statusText}`);
+        log("error", `[${project.id} - PR] ❌ Erreur API GitHub lors de la récupération de la PR #${prNumber}: ${getRes.status} ${getRes.statusText}`);
         return;
       }
       pr = await getRes.json();
 
       if (pr.merged) {
-         console.log(`[${project.id} - PR] ℹ️ PR #${prNumber} est déjà fusionnée.`);
+         log("info", `[${project.id} - PR] ℹ️ PR #${prNumber} est déjà fusionnée.`);
          return;
       }
       if (pr.title && pr.title.toLowerCase().includes('bump')) {
@@ -105,18 +106,18 @@ export async function checkAndMergePR(project, prNumber) {
         break;
       }
 
-      console.log(`[${project.id} - PR] ⏳ PR #${prNumber} 'mergeable' est en cours d'évaluation par GitHub... Attente 15s (${retries+1}/${maxRetries})`);
+      log("info", `[${project.id} - PR] ⏳ PR #${prNumber} 'mergeable' est en cours d'évaluation par GitHub... Attente 15s (${retries+1}/${maxRetries})`);
       await sleep(15000);
       retries++;
     }
 
     if (mergeable === null) {
-       console.log(`[${project.id} - PR] ⚠️ Impossible de déterminer si la PR #${prNumber} est mergeable après plusieurs tentatives. On passe.`);
+       log("info", `[${project.id} - PR] ⚠️ Impossible de déterminer si la PR #${prNumber} est mergeable après plusieurs tentatives. On passe.`);
        return;
     }
 
     if (mergeable === false || pr.mergeable_state === 'blocked') {
-       console.log(`[${project.id} - PR] ⚠️ PR #${prNumber} ne peut pas être mergée. État: ${pr.mergeable_state}. Cela peut être dû à des règles de protection de branche (ex: reviews requises manquantes, checks CI en échec ou en cours, etc).`);
+       log("info", `[${project.id} - PR] ⚠️ PR #${prNumber} ne peut pas être mergée. État: ${pr.mergeable_state}. Cela peut être dû à des règles de protection de branche (ex: reviews requises manquantes, checks CI en échec ou en cours, etc).`);
        return;
     }
 
@@ -132,7 +133,7 @@ export async function checkAndMergePR(project, prNumber) {
     }, 'merge_pr');
 
     if (!mergeRes.ok && mergeRes.status === 405) {
-      console.log(`[${project.id} - PR] ⚠️ La méthode 'merge' classique n'est pas autorisée (405). Tentative avec 'squash'...`);
+      log("info", `[${project.id} - PR] ⚠️ La méthode 'merge' classique n'est pas autorisée (405). Tentative avec 'squash'...`);
       mergeRes = await githubRequest(project, `https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/merge`, {
         method: 'PUT',
         headers: {
@@ -145,15 +146,15 @@ export async function checkAndMergePR(project, prNumber) {
     }
 
     if (mergeRes.ok) {
-      console.log(`[${project.id} - PR] 🟢 SUCCÈS : PR #${prNumber} fusionnée automatiquement !`);
+      log("info", `[${project.id} - PR] 🟢 SUCCÈS : PR #${prNumber} fusionnée automatiquement !`);
     } else {
-      console.error(`[${project.id} - PR] 🔴 ÉCHEC de l'auto-merge de la PR #${prNumber}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
+      log("error", `[${project.id} - PR] 🔴 ÉCHEC de l'auto-merge de la PR #${prNumber}. Status: ${mergeRes.status} ${mergeRes.statusText}`);
       let errText = '';
       try { errText = await mergeRes.text(); } catch(e) {}
-      if (errText) console.error(`Détails: ${errText}`);
+      if (errText) log("error", `Détails: ${errText}`);
     }
   } catch (error) {
-    console.error(`[${project.id} - PR] Erreur critique lors de checkAndMergePR :`, error);
+    log("error", `[${project.id} - PR] Erreur critique lors de checkAndMergePR :`, error);
   }
 }
 export async function listOpenPRs(project) {
@@ -263,7 +264,7 @@ export async function mergeOpenPRs(project) {
     }, 'list_open_prs');
     if (!res.ok) {
         const errorText = await res.text();
-        console.error(`[${project.id} - GitHub] API Error fetching open PRs: ${res.status} ${res.statusText} - ${errorText}`);
+        log("error", `[${project.id} - GitHub] API Error fetching open PRs: ${res.status} ${res.statusText} - ${errorText}`);
         return;
     }
     const prs = await res.json();
@@ -280,6 +281,6 @@ export async function mergeOpenPRs(project) {
       await checkAndMergePR(project, pr.number);
     }));
   } catch (error) {
-    console.error(`[${project.id} - PR] Erreur critique lors de mergeOpenPRs :`, error);
+    log("error", `[${project.id} - PR] Erreur critique lors de mergeOpenPRs :`, error);
   }
 }

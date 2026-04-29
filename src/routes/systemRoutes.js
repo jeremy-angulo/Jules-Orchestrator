@@ -91,6 +91,11 @@ router.get('/health-status', apiRateLimiter, requirePermission('keys.read'), asy
     res.status(200).json({ hours, services });
 });
 
+router.get('/logs', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+    const status = await controlCenter.getStatus();
+    res.status(200).json({ logs: status.events });
+});
+
 router.get('/audit-events', apiRateLimiter, requirePermission('audit.read'), async (req, res) => {
     const hours = Number(req.query.hours || 24);
     const limit = Number(req.query.limit || 200);

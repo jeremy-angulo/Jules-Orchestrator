@@ -48,6 +48,7 @@ const el = {
   tokenUsageList: document.querySelector('#tokenUsageList'),
   serviceStatusList: document.querySelector('#serviceStatusList'),
   requestVolumeBars: document.querySelector('#requestVolumeBars'),
+  systemConsole: document.querySelector('#systemConsole'),
 
   // Users
   inviteUserBtn: document.querySelector('#inviteUserBtn'),
@@ -206,12 +207,13 @@ function switchView(view) {
 // =========================================================
 async function refreshDashboard() {
   try {
-    const [status, keys, metrics, health, agentsData] = await Promise.all([
+    const [status, keys, metrics, health, agentsData, logsData] = await Promise.all([
       apiGet('/api/status'),
       apiGet('/api/keys').catch(() => ({ keys: [], message: 'unavailable' })),
       apiGet('/api/analytics/metrics?hours=24').catch(() => ({ hours: 24, series: {} })),
       apiGet('/api/health-status?hours=24').catch(() => ({ hours: 24, services: [] })),
       apiGet('/api/agents').catch(() => ({ agents: [] })),
+      apiGet('/api/system/logs').catch(() => ({ logs: [] })),
     ]);
 
     state.status = status;
@@ -219,6 +221,7 @@ async function refreshDashboard() {
     state.metrics = metrics;
     state.health = health;
     state.agents = agentsData.agents || [];
+    state.logs = logsData.logs || [];
 
     try {
       const usersData = await apiGet('/api/users');
@@ -1636,6 +1639,43 @@ function renderHealth() {
     el.requestVolumeBars.appendChild(b);
   }
   if (values.length === 0) el.requestVolumeBars.innerHTML = '<span class="muted">No data yet.</span>';
+
+  renderLogs();
+}
+
+function renderLogs() {
+  if (!el.systemConsole) return;
+  const logs = state.logs || [];
+  
+  // Only re-render if count changed or empty to avoid jitter
+  if (el.systemConsole.children.length === logs.length && logs.length > 0) return;
+
+  el.systemConsole.innerHTML = '';
+  // Logs are unshifted (newest first) in CC, but we want to show them in order in a console
+  const displayLogs = [...logs].reverse();
+
+  for (const log of displayLogs) {
+    const div = document.createElement('div');
+    div.className = `log-line level-${log.level}`;
+    
+    const time = new Date(log.at).toLocaleTimeString();
+    const metaStr = Object.keys(log.meta || {}).length ? JSON.stringify(log.meta) : '';
+
+    div.innerHTML = `
+      <span class="log-time">${time}</span>
+      <span class="log-level level-${log.level}">${log.level}</span>
+      <span class="log-msg">${escapeHtml(log.message)}</span>
+      ${metaStr ? `<span class="log-meta">${escapeHtml(metaStr)}</span>` : ''}
+    `;
+    el.systemConsole.appendChild(div);
+  }
+
+  if (logs.length === 0) {
+    el.systemConsole.innerHTML = '<div class="muted">No logs available.</div>';
+  } else {
+    // Auto-scroll to bottom
+    el.systemConsole.scrollTop = el.systemConsole.scrollHeight;
+  }
 }
 
 // =========================================================

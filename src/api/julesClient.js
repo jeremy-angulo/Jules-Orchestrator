@@ -4,7 +4,10 @@ import { checkAndMergePR } from './githubClient.js';
 import { getAvailableToken } from './tokenRotation.js';
 import { recordApiCall } from '../db/database.js';
 import { recordServiceCheck, recordServiceError } from '../db/database.js';
+import { log } from '../utils/logger.js';
+
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
+
 /**
  * Base API client for Jules REST API
  */
@@ -39,7 +42,7 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
   try {
     const startedAt = Date.now();
     if (process.env.NODE_ENV !== 'production') {
-      console.log(`[DEBUG] julesAPI: ${method} ${url}`);
+      log("info", `[DEBUG] julesAPI: ${method} ${url}`);
     }
     const res = await fetch(url, options);
     const responseMs = Date.now() - startedAt;
@@ -55,7 +58,7 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
       } catch (e) {
         errorDetails = await res.text().catch(() => '');
       }
-      console.error(`[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
+      log("error", `[julesAPI] Error API: ${res.status} ${res.statusText} - ${errorDetails}`);
       recordServiceError('jules_api', `Jules API returned ${res.status}`, {
         code: String(res.status),
         statusCode: res.status,
@@ -71,7 +74,7 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     const text = await res.text();
     return text ? JSON.parse(text) : {};
   } catch (error) {
-    console.error(`[julesAPI] Network Error:`, error);
+    log("error", `[julesAPI] Network Error:`, error);
     recordServiceCheck('jules_api', false, {
       statusCode: null,
       responseMs: null
@@ -94,7 +97,7 @@ export async function listSources(agentName, pageSize, pageToken, filter) {
 export async function getSource(agentName, sourceId) {
   const safeId = sourceId.startsWith('sources/') ? sourceId : `sources/${sourceId}`;
   if (process.env.NODE_ENV !== 'production') {
-    console.log(`[DEBUG] getSource: agentName=${agentName}, sourceId=${sourceId}, safeId=${safeId}`);
+    log("info", `[DEBUG] getSource: agentName=${agentName}, sourceId=${sourceId}, safeId=${safeId}`);
   }
   return julesAPI(agentName, `/${safeId}`);
 }
@@ -183,7 +186,7 @@ export async function monitorExistingSession(sessionName, agentName, project, op
     } else if (s.state === 'COMPLETED') {
       const hasPR = s.outputs?.some(o => o.pullRequest);
       if (!hasPR) return false;
-      console.log(`[${project.id} - ${agentName}] ✅ Resumed session completed with PR.`);
+      log("info", `[${project.id} - ${agentName}] ✅ Resumed session completed with PR.`);
       return true;
     } else if (s.state === 'FAILED') {
       return false;
@@ -196,7 +199,7 @@ export async function monitorExistingSession(sessionName, agentName, project, op
  * Starts a Jules session and monitors it until completion or failure.
  */
 export async function startAndMonitorSession(instruction, agentName, project, options = {}) {
-  console.log(`\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
+  log("info", `\n[${project.id} - ${agentName}] 🟢 Lancement de la session Jules...`);
   const MAX_RETRIES = 3;
   let attempt = 0;
   const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
@@ -204,7 +207,7 @@ export async function startAndMonitorSession(instruction, agentName, project, op
   const requestOptions = preferredTokenId ? { preferredTokenId } : {};
   while (attempt < MAX_RETRIES) {
     if (shouldStop()) {
-      console.log(`[${project.id} - ${agentName}] 🛑 Arrêt demandé avant création de session.`);
+      log("info", `[${project.id} - ${agentName}] 🛑 Arrêt demandé avant création de session.`);
       return false;
     }
     attempt++;
@@ -223,7 +226,7 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         options.media
       );
       if (!session || !session.name) {
-        console.error(`[${project.id} - ${agentName}] ❌ Erreur de création de session. (Tentative ${attempt}/${MAX_RETRIES})`);
+        log("error", `[${project.id} - ${agentName}] ❌ Erreur de création de session. (Tentative ${attempt}/${MAX_RETRIES})`);
         if (attempt >= MAX_RETRIES) return false;
         await sleep(30000);
         continue;
@@ -236,7 +239,7 @@ export async function startAndMonitorSession(instruction, agentName, project, op
       // Boucle de surveillance infinie jusqu'à complétion ou échec
       while (true) {
         if (shouldStop()) {
-          console.log(`[${project.id} - ${agentName}] 🛑 Arrêt demandé pendant la surveillance de session.`);
+          log("info", `[${project.id} - ${agentName}] 🛑 Arrêt demandé pendant la surveillance de session.`);
           return false;
         }
         const state = await getSession(agentName, sessionName, requestOptions);
@@ -247,7 +250,7 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         if (state.state === 'AWAITING_PLAN_APPROVAL') {
           await approvePlan(agentName, sessionName, requestOptions);
         } else if (state.state === 'AWAITING_USER_FEEDBACK') {
-          console.log(`[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
+          log("info", `[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
           await sendMessage(agentName, sessionName, "keep going", requestOptions);
         } else if (state.state === 'COMPLETED') {
           // Anti-Triche : Vérifier qu'une PR a bien été créée
@@ -273,7 +276,7 @@ export async function startAndMonitorSession(instruction, agentName, project, op
           if (!hasPR) {
             return false;
           }
-          console.log(`[${project.id} - ${agentName}] ✅ Travail terminé avec succès et PR détectée !`);
+          log("info", `[${project.id} - ${agentName}] ✅ Travail terminé avec succès et PR détectée !`);
           return true;
         }
         else if (state.state === 'FAILED') {
@@ -281,13 +284,13 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         }
         // On attend avant de revérifier l'état
         if (shouldStop()) {
-          console.log(`[${project.id} - ${agentName}] 🛑 Arrêt demandé avant prochain polling.`);
+          log("info", `[${project.id} - ${agentName}] 🛑 Arrêt demandé avant prochain polling.`);
           return false;
         }
         await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
       }
     } catch (e) {
-      console.error(`[${project.id} - ${agentName}] Erreur critique lors de la surveillance (Tentative ${attempt}/${MAX_RETRIES}):`, e);
+      log("error", `[${project.id} - ${agentName}] Erreur critique lors de la surveillance (Tentative ${attempt}/${MAX_RETRIES}):`, e);
     }
     if (attempt < MAX_RETRIES) {
       await sleep(30000); // Wait before retrying

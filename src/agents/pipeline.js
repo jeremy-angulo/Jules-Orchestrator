@@ -1,3 +1,4 @@
+import { log } from "../utils/logger.js";
 import cron from 'node-cron';
 import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
@@ -11,7 +12,7 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
   const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
 
     try {
-      console.log(`\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour la Pipeline...`);
+      log("info", `\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour la Pipeline...`);
       // 1. Lever le drapeau rouge
       await lockProject(project.id);
       // 2. Attendre que les agents en cours finissent leur travail proprement (timeout 1h)
@@ -19,7 +20,7 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
       const timeout = 3600; // 1 heure en secondes
       while (await getActiveTasks(project.id) > 0 && waited < timeout) {
         if (shouldStop()) {
-          console.log(`[${project.id} - Pipeline] 🛑 Arrêt demandé pendant l'attente des tâches actives.`);
+          log("info", `[${project.id} - Pipeline] 🛑 Arrêt demandé pendant l'attente des tâches actives.`);
           return;
         }
         await sleep(15000);
@@ -27,7 +28,7 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
       }
 
       if (waited >= timeout) {
-         console.log(`[${project.id} - Pipeline] ⚠️ Timeout d'une heure atteint, on force l'arrêt des agents restants...`);
+         log("info", `[${project.id} - Pipeline] ⚠️ Timeout d'une heure atteint, on force l'arrêt des agents restants...`);
          if (typeof options.onTimeout === 'function') {
            await options.onTimeout(project.id);
          }
@@ -35,7 +36,7 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
          await sleep(10000);
       }
 
-      console.log(`[${project.id} - Pipeline] 🚀 Repo libre ! Lancement de la pipeline de stabilisation.`);
+      log("info", `[${project.id} - Pipeline] 🚀 Repo libre ! Lancement de la pipeline de stabilisation.`);
       const pipeline = project.buildAndMergePipeline;
       const prompt = pipeline.prompt;
       await incrementTasks(project.id);
@@ -47,39 +48,39 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
 
       while (!success) {
         if (shouldStop()) {
-            console.log(`[${project.id} - Pipeline] 🛑 Arrêt demandé pendant la boucle de stabilisation.`);
+            log("info", `[${project.id} - Pipeline] 🛑 Arrêt demandé pendant la boucle de stabilisation.`);
             break;
         }
         if (Date.now() - pipelineStartTime >= PIPELINE_TIMEOUT_MS) {
-            console.log(`[${project.id} - Pipeline] ⚠️ Timeout global du pipeline atteint (3h). Arrêt des tentatives.`);
+            log("info", `[${project.id} - Pipeline] ⚠️ Timeout global du pipeline atteint (3h). Arrêt des tentatives.`);
             break;
         }
 
         success = await startAndMonitorSession(prompt, "Pipeline Agent", project, { shouldStop });
         if (success) {
-          console.log(`[${project.id} - Pipeline] ✅ Pipeline terminée avec succès. Tentative de merge automatique...`);
+          log("info", `[${project.id} - Pipeline] ✅ Pipeline terminée avec succès. Tentative de merge automatique...`);
           await mergeOpenPRs(project);
         } else {
-          console.log(`[${project.id} - Pipeline] ⚠️ Jules a échoué. On relance l'agent jusqu'à succès...`);
+          log("info", `[${project.id} - Pipeline] ⚠️ Jules a échoué. On relance l'agent jusqu'à succès...`);
           await sleep(30000); // Attente avant de réessayer
         }
       }
     } catch (error) {
-        console.error(`[${project.id} - Pipeline] ❌ Erreur critique lors de la Pipeline :`, error);
+        log("error", `[${project.id} - Pipeline] ❌ Erreur critique lors de la Pipeline :`, error);
     } finally {
         await decrementTasks(project.id);
 
         // Nettoyage de sécurité: si le compteur de tâches est bloqué > 0, on le force à 0
         let currentTasks = await getActiveTasks(project.id);
         while (currentTasks > 0) {
-            console.log(`[${project.id} - Pipeline] ⚠️ Nettoyage d'une tâche fantôme...`);
+            log("info", `[${project.id} - Pipeline] ⚠️ Nettoyage d'une tâche fantôme...`);
             await decrementTasks(project.id);
             currentTasks = await getActiveTasks(project.id);
         }
 
         // 5. Baisse du drapeau rouge, les agents de fond reprennent
         await unlockProject(project.id);
-        console.log(`[${project.id} - Pipeline] 🔓 Projet déverrouillé, les agents repartent au galop !`);
+        log("info", `[${project.id} - Pipeline] 🔓 Projet déverrouillé, les agents repartent au galop !`);
     }
 }
 

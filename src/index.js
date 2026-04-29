@@ -1,8 +1,11 @@
 import 'dotenv/config';
 import app from './app.js';
 import { controlCenter } from './controlCenter.js';
+import { setControlCenterForLogger } from './utils/logger.js';
 import { startWebsiteHealthMonitor } from './services/healthMonitor.js';
 import { initTables } from './db/database.js';
+
+setControlCenterForLogger(controlCenter);
 
 const PORT = process.env.PORT || 3000;
 
