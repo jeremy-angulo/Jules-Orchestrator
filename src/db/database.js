@@ -237,7 +237,8 @@ export async function recordServiceCheck(serviceId, ok, { statusCode = 200, resp
   await executeWithRetry({ sql: 'INSERT INTO service_checks (service, ok, response_ms, error_message, timestamp, source) VALUES (?, ?, ?, ?, ?, ?)', args: [serviceId, ok ? 1 : 0, responseMs, errorMessage, Date.now(), source] });
 }
 export async function recordServiceError(serviceId, error, source = 'monitor') {
-  await recordServiceCheck(serviceId, false, { errorMessage: String(error), source });
+  const sourceStr = typeof source === 'object' && source !== null ? JSON.stringify(source) : String(source);
+  await recordServiceCheck(serviceId, false, { errorMessage: String(error), source: sourceStr });
 }
 export async function listServiceChecks(serviceId, limit = 50) {
   const rs = await executeWithRetry({ sql: 'SELECT * FROM service_checks WHERE service = ? ORDER BY id DESC LIMIT ?', args: [serviceId, limit] });
@@ -348,8 +349,13 @@ export async function getAgent(id) {
   return rs.rows[0];
 }
 export async function createAgent(a) {
-  const rs = await executeWithRetry({ sql: 'INSERT INTO agents (name, description, prompt, color, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [a.name, a.description, a.prompt, a.color, a.sort_order || 0, Date.now(), Date.now()] });
-  return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : null;
+  let rs;
+  if (a.id) {
+    rs = await executeWithRetry({ sql: 'INSERT INTO agents (id, name, description, prompt, color, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', args: [a.id, a.name, a.description, a.prompt, a.color, a.sort_order || 0, Date.now(), Date.now()] });
+  } else {
+    rs = await executeWithRetry({ sql: 'INSERT INTO agents (name, description, prompt, color, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [a.name, a.description, a.prompt, a.color, a.sort_order || 0, Date.now(), Date.now()] });
+  }
+  return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : (a.id || null);
 }
 export async function updateAgent(id, a) {
   await executeWithRetry({ sql: 'UPDATE agents SET name=?, description=?, prompt=?, color=?, updated_at=? WHERE id=?', args: [a.name, a.description, a.prompt, a.color, Date.now(), id] });

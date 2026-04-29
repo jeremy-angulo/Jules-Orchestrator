@@ -85,7 +85,7 @@ async function main() {
     env: {
       ...process.env,
       PORT: String(PORT),
-      ORCHESTRATOR_DB_PATH: screenshotDbPath,
+      TURSO_DATABASE_URL: 'file:' + screenshotDbPath,
       JULES_MAIN_TOKEN: 'test_main_token_1234567890',
       JULES_SECONDARY_TOKENS: 'test_secondary_a_1234567890,test_secondary_b_1234567890',
       GITHUB_TOKEN: process.env.GITHUB_TOKEN || 'test_github_token_1234567890'
