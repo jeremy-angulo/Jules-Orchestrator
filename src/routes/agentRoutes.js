@@ -6,7 +6,7 @@ import { listAgents, getAgent, createAgent, updateAgent, deleteAgent, reorderAge
 
 const router = express.Router();
 
-router.get('/', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
+router.get('/', apiRateLimiter, async (req, res) => {
     res.status(200).json({ agents: await listAgents() });
 });
 
@@ -24,7 +24,7 @@ router.post('/', apiRateLimiter, requirePermission('agents.control'), async (req
     }
 });
 
-router.get('/:id', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
+router.get('/:id', apiRateLimiter, async (req, res) => {
     const agent = await getAgent(req.params.id);
     if (!agent) return res.status(404).json({ error: 'Agent not found.' });
     res.status(200).json(agent);

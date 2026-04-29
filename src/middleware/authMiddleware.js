@@ -19,6 +19,18 @@ const parseCookies = (cookieHeader = '') => {
 };
 
 export const attachDashboardUser = async (req, res, next) => {
+    // 1. Check for Admin API Key first
+    const expectedKey = process.env.DASHBOARD_API_KEY;
+    const providedKey = req.get('x-admin-key') || req.query.key;
+    
+    console.log(`[AuthDebug] Path: ${req.originalUrl}, Expected: ${expectedKey ? 'SET' : 'MISSING'}, Provided: ${providedKey ? 'SET' : 'MISSING'}`);
+
+    if (expectedKey && providedKey && providedKey === expectedKey) {
+        req.dashboardUser = { id: 0, email: 'admin@system', role: 'admin' };
+        req.isAdminKey = true;
+        return next();
+    }
+
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies[sessionCookieName];
     req.dashboardUser = await getDashboardSessionUser(token);
@@ -28,21 +40,24 @@ export const attachDashboardUser = async (req, res, next) => {
 
 export const requireDashboardAuth = (req, res, next) => {
     if (!req.dashboardUser) {
-        if (req.path.startsWith('/api')) return res.status(401).json({ error: 'Authentication required.' });
+        const fullUrl = req.originalUrl || '';
+        const isApi = fullUrl.startsWith('/api/') || fullUrl === '/api' || fullUrl.startsWith('/auth/');
+        if (isApi) {
+            return res.status(401).json({ error: 'Authentication required.' });
+        }
         return res.redirect('/login');
     }
     next();
 };
 
 export const requirePermission = (permission) => (req, res, next) => {
-    const expected = process.env.DASHBOARD_API_KEY;
-    const provided = req.get('x-admin-key') || req.query.key;
-    if (expected && provided && provided === expected) return next();
-    if (!req.dashboardUser) return res.status(401).json({ error: 'Authentication required.' });
-    if (!hasPermission(req.dashboardUser.role, permission)) {
-        return res.status(403).json({ error: `Missing permission: ${permission}` });
+    if (!req.dashboardUser) {
+        return res.status(401).json({ error: 'Authentication required.' });
     }
-    next();
+    if (req.dashboardUser.role === 'admin' || hasPermission(req.dashboardUser.role, permission)) {
+        return next();
+    }
+    return res.status(403).json({ error: `Missing permission: ${permission}` });
 };
 
 export const requireCriticalConfirmation = (req, res, next) => {

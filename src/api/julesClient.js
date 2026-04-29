@@ -266,8 +266,8 @@ export async function startAndMonitorSession(instruction, agentName, project, op
               const match = prUrl.match(/\/pull\/(\d+)$/);
               if (match) {
                   const prNumber = match[1];
-                  // Planifier la vérification et le merge après 3 minutes
-                  // setTimeout(() => checkAndMergePR(project, prNumber), 180000); // Managed by scheduleAutoMergeService
+                  // On planifie une vérification et un merge automatique rapide
+                  setTimeout(() => checkAndMergePR(project, prNumber).catch(() => {}), 60000);
               }
           }
           if (!hasPR) {

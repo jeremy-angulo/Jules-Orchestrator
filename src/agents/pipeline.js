@@ -1,6 +1,7 @@
 import cron from 'node-cron';
 import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
+import { mergeOpenPRs } from '../api/githubClient.js';
 import { lockProject, unlockProject, incrementTasks, decrementTasks, getActiveTasks } from '../db/database.js';
 export async function runBuildAndMergePipelineOnce(project, options = {}) {
   if (!project.buildAndMergePipeline) {
@@ -56,7 +57,8 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
 
         success = await startAndMonitorSession(prompt, "Pipeline Agent", project, { shouldStop });
         if (success) {
-          console.log(`[${project.id} - Pipeline] ✅ Pipeline terminée avec succès.`);
+          console.log(`[${project.id} - Pipeline] ✅ Pipeline terminée avec succès. Tentative de merge automatique...`);
+          await mergeOpenPRs(project);
         } else {
           console.log(`[${project.id} - Pipeline] ⚠️ Jules a échoué. On relance l'agent jusqu'à succès...`);
           await sleep(30000); // Attente avant de réessayer

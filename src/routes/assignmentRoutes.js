@@ -6,7 +6,7 @@ import { listAssignments, getAssignment, createAssignment, updateAssignment, del
 
 const router = express.Router();
 
-router.get('/', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+router.get('/', apiRateLimiter, async (req, res) => {
     const assignments = await listAssignments(req.query.projectId || null);
     const enriched = assignments.map(a => ({ ...a, running: controlCenter.isAssignmentRunning(a.id) }));
     res.status(200).json({ assignments: enriched });

@@ -189,4 +189,23 @@ router.post('/:projectId/prs/merge-batch', apiRateLimiter, requirePermission('pr
     res.status(200).json({ results });
 });
 
+router.post('/:projectId/prs/close-batch', apiRateLimiter, requirePermission('prs.merge'), async (req, res) => {
+    const project = await getProjectOrFail(req.params.projectId, res);
+    if (!project) return;
+    const { prNumbers } = req.body || {};
+    if (!Array.isArray(prNumbers)) return res.status(400).json({ error: 'prNumbers array is required' });
+    const results = [];
+    for (const prNumber of prNumbers) {
+        try {
+            await closePR(project, Number(prNumber));
+            results.push({ prNumber: Number(prNumber), status: 'closed' });
+            await audit(req, 'pr.close', String(prNumber), { projectId: project.id });
+        } catch (err) {
+            results.push({ prNumber: Number(prNumber), status: 'failed', error: err.message });
+        }
+    }
+    invalidatePRCache(project.id);
+    res.status(200).json({ results });
+});
+
 export default router;

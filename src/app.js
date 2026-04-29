@@ -8,11 +8,7 @@ import { attachDashboardUser, requireDashboardAuth } from './middleware/authMidd
 
 // Routes
 import authRoutes from './routes/authRoutes.js';
-import projectRoutes from './routes/projectRoutes.js';
-import agentRoutes from './routes/agentRoutes.js';
-import assignmentRoutes from './routes/assignmentRoutes.js';
-import systemRoutes from './routes/systemRoutes.js';
-import julesRoutes from './routes/julesRoutes.js';
+import apiRouter from './routes/api.js';
 
 // Helpers & Database
 import { hasAnyDashboardUser } from './auth/dashboardAuth.js';
@@ -23,17 +19,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, '..', 'public');
 
-// Global Middlewares
+// 1. Basic Middlewares
 app.disable('x-powered-by');
 app.use(express.json({ limit: '1mb' }));
 app.use(securityHeaders);
 app.use(strictCors);
+
+// 2. IMPORTANT: User identification must come BEFORE any auth protection
 app.use(attachDashboardUser);
 
-// Static assets
+// 3. Static assets
 app.use('/assets', express.static(path.join(publicDir, 'assets')));
 
-// View Routes
+// 4. View Routes
 app.get('/', async (req, res) => {
     if (!(await hasAnyDashboardUser())) return res.redirect('/login?setup=1');
     if (!req.dashboardUser) return res.redirect('/login');
@@ -55,14 +53,10 @@ app.get('/health', async (req, res) => {
     res.status(200).send('Orchestrator is alive');
 });
 
-// Modular API Routes
+// 5. Modular Routes
 app.use('/auth', authRoutes);
-app.use('/api/projects', projectRoutes);
-app.use('/api/projects-config', projectRoutes); // Alias for config routes
-app.use('/api/agents', agentRoutes);
-app.use('/api/assignments', assignmentRoutes);
-app.use('/api/jules', julesRoutes);
-app.use('/api/sessions', julesRoutes); // Alias for historical sessions
-app.use('/api', systemRoutes); 
+
+// Group all /api routes behind auth (which now has user info from attachDashboardUser)
+app.use('/api', requireDashboardAuth, apiRouter);
 
 export default app;

@@ -1,7 +1,7 @@
 import express from 'express';
 import { controlCenter } from '../controlCenter.js';
 import { apiRateLimiter } from '../middleware/securityMiddleware.js';
-import { requireDashboardAuth, requirePermission, requireCriticalConfirmation, audit } from '../middleware/authMiddleware.js';
+import { requirePermission, requireCriticalConfirmation, audit } from '../middleware/authMiddleware.js';
 import { 
     recordDashboardMetric, 
     listDashboardMetrics, 
@@ -45,7 +45,7 @@ router.post('/runners/:runnerId/stop', apiRateLimiter, requirePermission('runner
     res.status(200).json({ ok: true, runnerId: req.params.runnerId });
 });
 
-router.get('/status', apiRateLimiter, requireDashboardAuth, async (req, res) => {
+router.get('/status', apiRateLimiter, async (req, res) => {
     let payload = await controlCenter.getStatus();
     payload.currentUser = req.dashboardUser;
     await recordDashboardMetric('active_runners', payload.runners.length);

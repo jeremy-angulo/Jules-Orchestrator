@@ -69,6 +69,16 @@ export class ControlCenter {
     }
   }
 
+  async _autoMergeCycle() {
+    for (const project of this.projects) {
+      try {
+        await mergeOpenPRs(project);
+      } catch (err) {
+        this.log('error', `Auto-merge failed for project ${project.id}`, { error: err.message });
+      }
+    }
+  }
+
   log(level, message, meta = {}) {
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -453,6 +463,13 @@ export class ControlCenter {
       }, 5 * 60 * 1000);
     }
 
+    // Auto-merge service (every 10 minutes)
+    if (!this.systemRunners.autoMergeService) {
+      this.systemRunners.autoMergeService = setInterval(() => this._autoMergeCycle(), 10 * 60 * 1000);
+      this.log('info', 'Auto-merge service started (10m interval)');
+      this._autoMergeCycle().catch(() => {}); // Initial run
+    }
+
     for (const project of this.projects) {
       if (!project.buildAndMergePipeline) continue;
       if (this.systemRunners.perProjectPipelines.has(project.id)) continue;
@@ -463,6 +480,10 @@ export class ControlCenter {
   }
 
   async stopSchedulers() {
+    if (this.systemRunners.autoMergeService) {
+      clearInterval(this.systemRunners.autoMergeService);
+      this.systemRunners.autoMergeService = null;
+    }
     for (const [projectId, task] of this.systemRunners.perProjectPipelines.entries()) {
       task.stop();
       this.systemRunners.perProjectPipelines.delete(projectId);
@@ -567,6 +588,12 @@ export class ControlCenter {
         await incrementTasks(project.id);
         try {
           const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
+          
+          if (current.wait_for_pr_merge) {
+            this.log('info', `Waiting for PR merge for assignment ${assignment.id} in project ${project.id}`);
+            await mergeOpenPRs(project);
+          }
+
           await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
             shouldStop: () => runner.shouldStop,
             onSessionCreated: async (sessionId) => {
@@ -617,6 +644,12 @@ export class ControlCenter {
       await incrementTasks(project.id);
       try {
         const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
+
+        if (current.wait_for_pr_merge) {
+          this.log('info', `Waiting for PR merge for assignment ${assignment.id} (cron) in project ${project.id}`);
+          await mergeOpenPRs(currentProject);
+        }
+
         await startAndMonitorSession(prompt, agent.name, currentProject, { 
           shouldStop: () => runner.shouldStop,
           onSessionCreated: (id) => { runner.sessionId = id; }
