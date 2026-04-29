@@ -181,7 +181,7 @@ export async function monitorExistingSession(sessionName, agentName, project, op
     if (!s) { await sleep(GLOBAL_CONFIG.POLLING_INTERVAL); continue; }
     if (s.state === 'AWAITING_PLAN_APPROVAL') {
       await approvePlan(agentName, sessionName, requestOptions).catch(() => {});
-    } else if (s.state === 'AWAITING_USER_FEEDBACK') {
+    } else if (s.state === 'AWAITING_USER_FEEDBACK' || s.state === 'WAITING_FOR_USER_INPUT') {
       await sendMessage(agentName, sessionName, 'keep going', requestOptions).catch(() => {});
     } else if (s.state === 'COMPLETED') {
       const hasPR = s.outputs?.some(o => o.pullRequest);
@@ -249,8 +249,8 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         }
         if (state.state === 'AWAITING_PLAN_APPROVAL') {
           await approvePlan(agentName, sessionName, requestOptions);
-        } else if (state.state === 'AWAITING_USER_FEEDBACK') {
-          log("info", `[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
+        } else if (state.state === 'AWAITING_USER_FEEDBACK' || state.state === 'WAITING_FOR_USER_INPUT') {
+          log("info", `[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour (${state.state}). Injection de "keep going"...`);
           await sendMessage(agentName, sessionName, "keep going", requestOptions);
         } else if (state.state === 'COMPLETED') {
           // Anti-Triche : Vérifier qu'une PR a bien été créée
