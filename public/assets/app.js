@@ -1005,7 +1005,7 @@ function createAssignmentCard(a, projectId) {
     <div class="assignment-card-body">
       <div class="row-between">
         <div>
-          <p class="assignment-name">${escapeHtml(a.agent_name || `Agent #${a.agent_id}`)}</p>
+          <p class="assignment-name">${escapeHtml(a.agent_name || (a.agent_id ? `Agent #${a.agent_id}` : 'Custom Assignment'))}</p>
           <p class="muted small">${escapeHtml(modeLabel)}</p>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
@@ -1141,14 +1141,32 @@ function renderSessionDrawer(data) {
 
   feed.innerHTML = '';
   for (const act of activities) {
-    const role = act.author?.role || '';
+    const role = act.author?.role || act.role || '';
     const isUser = role === 'USER';
     const isSystem = role === 'SYSTEM' || role === 'ORCHESTRATOR';
     const bubbleClass = isUser ? 'bubble-user' : isSystem ? 'bubble-system' : 'bubble-agent';
-    const roleLabel = isUser ? 'You' : isSystem ? 'System' : 'Jules';
+    const roleLabel = isUser ? 'You' : isSystem ? 'System' : (act.author?.name || 'Jules');
 
-    const parts = Array.isArray(act.parts) ? act.parts : [];
-    if (parts.length === 0 && !act.text) continue;
+    let parts = Array.isArray(act.parts) ? act.parts : [];
+    if (parts.length === 0 && act.content && Array.isArray(act.content.parts)) {
+      parts = act.content.parts;
+    }
+    if (parts.length === 0 && act.message?.content?.parts && Array.isArray(act.message.content.parts)) {
+      parts = act.message.content.parts;
+    }
+
+    const textFallback = act.text || act.content?.text || act.message?.content?.text;
+    if (parts.length === 0 && !textFallback) {
+      // If we still have nothing, but there are keys, maybe show it raw
+      const keys = Object.keys(act).filter(k => !['name', 'createTime', 'author', 'role'].includes(k));
+      if (keys.length > 0) {
+        const bubble = document.createElement('div');
+        bubble.className = `session-bubble bubble-system`;
+        bubble.innerHTML = `<div class="bubble-role">Debug</div><pre class="bubble-code" style="opacity:0.5">${escapeHtml(JSON.stringify(act, null, 2))}</pre>`;
+        feed.appendChild(bubble);
+      }
+      continue;
+    }
 
     const bubble = document.createElement('div');
     bubble.className = `session-bubble ${bubbleClass}`;
@@ -1170,8 +1188,8 @@ function renderSessionDrawer(data) {
         el.className = 'bubble-code';
         el.textContent = part.code;
         bubble.appendChild(el);
-      } else if (part.functionCall) {
-        const fc = part.functionCall;
+      } else if (part.functionCall || part.toolCall) {
+        const fc = part.functionCall || part.toolCall;
         const el = document.createElement('div');
         el.className = 'bubble-tool-call';
         el.innerHTML = `<span class="tool-name">⚙ ${escapeHtml(fc.name || 'tool_call')}</span>`;
@@ -1182,11 +1200,11 @@ function renderSessionDrawer(data) {
           el.appendChild(pre);
         }
         bubble.appendChild(el);
-      } else if (part.functionResponse) {
-        const fr = part.functionResponse;
+      } else if (part.functionResponse || part.toolResponse) {
+        const fr = part.functionResponse || part.toolResponse;
         const el = document.createElement('div');
         el.className = 'bubble-tool-response';
-        const resp = fr.response ?? fr;
+        const resp = fr.response ?? fr.content ?? fr;
         const text = typeof resp === 'string' ? resp : JSON.stringify(resp, null, 2);
         el.innerHTML = `<span class="tool-name muted">↩ ${escapeHtml(fr.name || 'response')}</span>`;
         const pre = document.createElement('pre');
@@ -1207,11 +1225,11 @@ function renderSessionDrawer(data) {
       }
     }
 
-    // Fallback: top-level text field (some Jules versions use this)
-    if (parts.length === 0 && act.text) {
+    // Fallback: top-level text field
+    if (parts.length === 0 && textFallback) {
       const el = document.createElement('div');
       el.className = 'bubble-text';
-      el.textContent = act.text;
+      el.textContent = textFallback;
       bubble.appendChild(el);
     }
 

@@ -15,9 +15,10 @@ router.get('/', apiRateLimiter, async (req, res) => {
 router.post('/', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
     const { project_id, agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge } = req.body || {};
     try {
-        await createAssignment({ project_id, agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge });
-        const all = await listAssignments(project_id);
-        const assignment = all[all.length - 1];
+        const id = await createAssignment({ project_id, agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge });
+        const assignment = await getAssignment(id);
+        if (!assignment) throw new Error('Failed to retrieve newly created assignment');
+        
         await controlCenter.startAssignment(assignment.id);
         await audit(req, 'assignment.create', String(assignment.id), { project_id, mode });
         res.status(201).json({ ok: true, assignment: { ...assignment, running: controlCenter.isAssignmentRunning(assignment.id) } });

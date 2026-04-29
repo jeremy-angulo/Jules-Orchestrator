@@ -9,9 +9,13 @@ const client = createClient({
 });
 
 async function executeWithRetry(stmt, retries = 5, delay = 500) {
+  const normalizedStmt = typeof stmt === 'string' ? stmt : {
+    ...stmt,
+    args: stmt.args ? stmt.args.map(a => a === undefined ? null : a) : []
+  };
   for (let i = 0; i < retries; i++) {
     try {
-      return await client.execute(stmt);
+      return await client.execute(normalizedStmt);
     } catch (err) {
       if (err.code === 'SQLITE_BUSY' && i < retries - 1) {
         await new Promise(r => setTimeout(r, delay));
@@ -23,9 +27,16 @@ async function executeWithRetry(stmt, retries = 5, delay = 500) {
 }
 
 async function batchWithRetry(stmts, mode, retries = 5, delay = 500) {
+  const normalizedStmts = stmts.map(stmt => {
+    if (typeof stmt === 'string') return stmt;
+    return {
+      ...stmt,
+      args: stmt.args ? stmt.args.map(a => a === undefined ? null : a) : []
+    };
+  });
   for (let i = 0; i < retries; i++) {
     try {
-      return await client.batch(stmts, mode);
+      return await client.batch(normalizedStmts, mode);
     } catch (err) {
       if (err.code === 'SQLITE_BUSY' && i < retries - 1) {
         await new Promise(r => setTimeout(r, delay));
@@ -337,7 +348,8 @@ export async function getAgent(id) {
   return rs.rows[0];
 }
 export async function createAgent(a) {
-  await executeWithRetry({ sql: 'INSERT INTO agents (name, description, prompt, color, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [a.name, a.description, a.prompt, a.color, a.sort_order || 0, Date.now(), Date.now()] });
+  const rs = await executeWithRetry({ sql: 'INSERT INTO agents (name, description, prompt, color, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [a.name, a.description, a.prompt, a.color, a.sort_order || 0, Date.now(), Date.now()] });
+  return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : null;
 }
 export async function updateAgent(id, a) {
   await executeWithRetry({ sql: 'UPDATE agents SET name=?, description=?, prompt=?, color=?, updated_at=? WHERE id=?', args: [a.name, a.description, a.prompt, a.color, Date.now(), id] });
@@ -369,16 +381,32 @@ export async function deleteProjectConfig(id) {
 
 // Assignments
 export async function listAssignments(pid = null) {
-  const q = pid ? { sql: 'SELECT * FROM assignments WHERE project_id = ?', args: [pid] } : { sql: 'SELECT * FROM assignments', args: [] };
+  const sql = `
+    SELECT a.*, ag.name as agent_name, ag.color as agent_color 
+    FROM assignments a 
+    LEFT JOIN agents ag ON a.agent_id = ag.id
+    ${pid ? 'WHERE a.project_id = ?' : ''}
+    ORDER BY a.created_at ASC
+  `;
+  const q = pid ? { sql, args: [pid] } : { sql, args: [] };
   const rs = await executeWithRetry(q);
   return rs.rows;
 }
 export async function getAssignment(id) {
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM assignments WHERE id = ?', args: [id] });
+  const rs = await executeWithRetry({ 
+    sql: `
+      SELECT a.*, ag.name as agent_name, ag.color as agent_color 
+      FROM assignments a 
+      LEFT JOIN agents ag ON a.agent_id = ag.id 
+      WHERE a.id = ?
+    `, 
+    args: [id] 
+  });
   return rs.rows[0];
 }
 export async function createAssignment(a) {
-  await executeWithRetry({ sql: 'INSERT INTO assignments (project_id, agent_id, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled, created_at, updated_at, custom_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [a.project_id, a.agent_id, a.mode, a.loop_pause_ms, a.cron_schedule, a.wait_for_pr_merge ? 1 : 0, a.enabled !== undefined ? (a.enabled ? 1 : 0) : 1, Date.now(), Date.now(), a.custom_prompt] });
+  const rs = await executeWithRetry({ sql: 'INSERT INTO assignments (project_id, agent_id, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled, created_at, updated_at, custom_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [a.project_id, a.agent_id, a.mode, a.loop_pause_ms, a.cron_schedule, a.wait_for_pr_merge ? 1 : 0, a.enabled !== undefined ? (a.enabled ? 1 : 0) : 1, Date.now(), Date.now(), a.custom_prompt] });
+  return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : null;
 }
 export async function updateAssignment(id, a) {
   await executeWithRetry({ sql: 'UPDATE assignments SET agent_id=?, custom_prompt=?, mode=?, loop_pause_ms=?, cron_schedule=?, wait_for_pr_merge=?, enabled=?, updated_at=? WHERE id=?', args: [a.agent_id, a.custom_prompt, a.mode, a.loop_pause_ms, a.cron_schedule, a.wait_for_pr_merge ? 1 : 0, a.enabled ? 1 : 0, Date.now(), id] });

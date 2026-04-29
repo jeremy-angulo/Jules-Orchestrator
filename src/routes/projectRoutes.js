@@ -130,7 +130,7 @@ router.post('/:projectId/assignments', apiRateLimiter, requirePermission('agents
     const { projectId } = req.params;
     const { agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge } = req.body || {};
     try {
-        await createAssignment({ 
+        const id = await createAssignment({ 
             project_id: projectId, 
             agent_id, 
             custom_prompt, 
@@ -139,8 +139,9 @@ router.post('/:projectId/assignments', apiRateLimiter, requirePermission('agents
             cron_schedule, 
             wait_for_pr_merge 
         });
-        const all = await listAssignments(projectId);
-        const assignment = all[all.length - 1];
+        const assignment = await getAssignment(id);
+        if (!assignment) throw new Error('Failed to retrieve newly created assignment');
+        
         await controlCenter.startAssignment(assignment.id);
         await audit(req, 'assignment.create', String(assignment.id), { projectId, mode });
         res.status(201).json({ ok: true, assignment: { ...assignment, running: controlCenter.isAssignmentRunning(assignment.id) } });
