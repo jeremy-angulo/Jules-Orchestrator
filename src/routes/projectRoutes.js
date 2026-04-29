@@ -126,6 +126,29 @@ router.get('/:projectId/assignments', apiRateLimiter, requirePermission('dashboa
     }
 });
 
+router.post('/:projectId/assignments', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
+    const { projectId } = req.params;
+    const { agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge } = req.body || {};
+    try {
+        await createAssignment({ 
+            project_id: projectId, 
+            agent_id, 
+            custom_prompt, 
+            mode, 
+            loop_pause_ms, 
+            cron_schedule, 
+            wait_for_pr_merge 
+        });
+        const all = await listAssignments(projectId);
+        const assignment = all[all.length - 1];
+        await controlCenter.startAssignment(assignment.id);
+        await audit(req, 'assignment.create', String(assignment.id), { projectId, mode });
+        res.status(201).json({ ok: true, assignment: { ...assignment, running: controlCenter.isAssignmentRunning(assignment.id) } });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
 router.post('/:projectId/lock', apiRateLimiter, requirePermission('project.lock'), requireCriticalConfirmation, async (req, res) => {
     const { projectId } = req.params;
     if (!await getProjectOrFail(projectId, res)) return;

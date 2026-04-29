@@ -55,6 +55,41 @@ router.post('/:id/run', apiRateLimiter, requirePermission('background.runOnce'),
     }
 });
 
+router.put('/:id', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
+    const id = Number(req.params.id);
+    const { agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled } = req.body || {};
+    
+    const current = await getAssignment(id);
+    if (!current) return res.status(404).json({ error: 'Assignment not found.' });
+
+    try {
+        await updateAssignment(id, { 
+            agent_id, 
+            custom_prompt, 
+            mode, 
+            loop_pause_ms, 
+            cron_schedule, 
+            wait_for_pr_merge, 
+            enabled: enabled !== undefined ? enabled : current.enabled 
+        });
+        
+        const updated = await getAssignment(id);
+        
+        // If it was running, we must restart it to apply new config
+        if (updated.enabled) {
+            await controlCenter.stopAssignment(id);
+            await controlCenter.startAssignment(id);
+        } else {
+            await controlCenter.stopAssignment(id);
+        }
+
+        await audit(req, 'assignment.update', String(id), { mode });
+        res.status(200).json({ ok: true, assignment: { ...updated, running: controlCenter.isAssignmentRunning(id) } });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
 router.delete('/:id', apiRateLimiter, requirePermission('agents.control'), requireCriticalConfirmation, async (req, res) => {
     const id = Number(req.params.id);
     await controlCenter.stopAssignment(id);

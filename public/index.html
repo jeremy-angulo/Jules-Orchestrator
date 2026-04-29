@@ -301,6 +301,14 @@
             </select>
           </div>
         </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="assignWaitForPR" /> 
+            <span>Wait for previous PR to be merged before next run</span>
+          </label>
+        </div>
+
         <div id="assignCronConfig" style="display:none">
           <input type="hidden" id="assignCronExpr" />
           <div class="cron-builder" id="assignCronBuilder" data-cron-freq="daily">

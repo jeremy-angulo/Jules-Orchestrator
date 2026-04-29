@@ -1956,6 +1956,9 @@ function openAssignmentModal(projectId, existing = null) {
   // Cron builder
   setCronBuilderFromExpr('#assignCronBuilder', '#assignCronExpr', existing?.cron_schedule || '');
 
+  // Wait for PR
+  document.querySelector('#assignWaitForPR').checked = !!existing?.wait_for_pr_merge;
+
   modal.classList.add('show');
 }
 
@@ -1975,6 +1978,7 @@ async function saveAssignment() {
   const pauseUnit = Number(document.querySelector('#assignLoopPauseUnit').value) || 60000;
   const loop_pause_ms = pauseVal * pauseUnit;
   const cron_schedule = document.querySelector('#assignCronExpr').value.trim() || null;
+  const wait_for_pr_merge = document.querySelector('#assignWaitForPR').checked;
 
   if (agentVal === 'custom' && !custom_prompt?.trim()) return showToast('Enter custom instructions', true);
   if (mode === 'scheduled' && !cron_schedule) return showToast('Cron schedule is required', true);
@@ -1987,7 +1991,8 @@ async function saveAssignment() {
       custom_prompt,
       mode, 
       loop_pause_ms, 
-      cron_schedule 
+      cron_schedule,
+      wait_for_pr_merge
     };
 
     if (id) {
