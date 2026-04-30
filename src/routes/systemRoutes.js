@@ -88,6 +88,7 @@ router.get('/health-status', apiRateLimiter, requirePermission('keys.read'), asy
             label,
             status: summary.errors > 0 ? 'degraded' : 'operational',
             errors: summary.errors,
+            windowHours: hours,
             latencyMs: latestCheck?.responseMs ?? null,
             lastCheckedAt: latestCheck ? new Date(latestCheck.timestamp).toISOString() : null,
             recentErrors: await listServiceErrors(serviceId, hours, 20)
