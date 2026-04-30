@@ -71,15 +71,32 @@ export async function getAvailableToken(agentName, options = {}) {
     }
   }
 
-  let bestToken = inventory[0].token;
-  let minUsage = inventory[0].usage24h;
+  // Pick the token with the lowest utilization (usage / limit)
+  let bestToken = null;
+  let minUtilization = Infinity;
 
+  // 1. Try to find a token below its limit first
   for (const entry of inventory) {
-    if (entry.usage24h < minUsage) {
-      minUsage = entry.usage24h;
-      bestToken = entry.token;
+    if (entry.usage24h < entry.limit24h) {
+      const utilization = entry.usage24h / entry.limit24h;
+      if (utilization < minUtilization) {
+        minUtilization = utilization;
+        bestToken = entry.token;
+      }
     }
   }
 
-  return bestToken;
+  // 2. If all tokens are at/above limit, pick the one with the lowest utilization overall
+  if (!bestToken) {
+    minUtilization = Infinity;
+    for (const entry of inventory) {
+      const utilization = entry.usage24h / entry.limit24h;
+      if (utilization < minUtilization) {
+        minUtilization = utilization;
+        bestToken = entry.token;
+      }
+    }
+  }
+
+  return bestToken || inventory[0].token;
 }
