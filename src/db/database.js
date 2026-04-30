@@ -154,7 +154,8 @@ export async function initTables() {
     )`,
     `CREATE TABLE IF NOT EXISTS token_names (
       token_index INTEGER PRIMARY KEY,
-      custom_name TEXT NOT NULL
+      custom_name TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)
     )`,
     `CREATE TABLE IF NOT EXISTS agent_sessions (
       session_id TEXT PRIMARY KEY,
@@ -175,7 +176,8 @@ export async function initTables() {
     "ALTER TABLE agent_sessions ADD COLUMN started_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN created_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN ended_at INTEGER",
-    "ALTER TABLE agent_sessions ADD COLUMN status TEXT DEFAULT 'running'"
+    "ALTER TABLE agent_sessions ADD COLUMN status TEXT DEFAULT 'running'",
+    "ALTER TABLE token_names ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)"
   ];
 
   for (const sql of migrations) {

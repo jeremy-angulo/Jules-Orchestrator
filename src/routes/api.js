@@ -36,6 +36,7 @@ import agentRoutes from './agentRoutes.js';
 import assignmentRoutes from './assignmentRoutes.js';
 import systemRoutes from './systemRoutes.js';
 import julesRoutes from './julesRoutes.js';
+import userRoutes from './userRoutes.js';
 
 const router = express.Router();
 
@@ -44,6 +45,7 @@ router.use('/projects', projectRoutes);
 router.use('/agents', agentRoutes);
 router.use('/assignments', assignmentRoutes);
 router.use('/jules', julesRoutes);
+router.use('/users', userRoutes);
 router.use('/', systemRoutes);
 
 // Helper

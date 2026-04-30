@@ -545,6 +545,7 @@ function renderProjectDetail(data, assignments) {
   showTab(activeTab);
 
   // Wire up detail actions (lock icon, run-agent, assignment buttons)
+  el.projectDetailTitle.addEventListener('click', handleDetailClick);
   el.projectDetailContent.addEventListener('click', handleDetailClick);
 }
 
