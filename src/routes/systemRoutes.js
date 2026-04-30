@@ -45,6 +45,26 @@ router.post('/runners/:runnerId/stop', apiRateLimiter, requirePermission('runner
     res.status(200).json({ ok: true, runnerId: req.params.runnerId });
 });
 
+router.post('/start', apiRateLimiter, requirePermission('system.control'), async (req, res) => {
+    try {
+        await controlCenter.startAll();
+        await audit(req, 'system.start', 'all');
+        res.status(200).json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
+router.post('/stop', apiRateLimiter, requirePermission('system.control'), requireCriticalConfirmation, async (req, res) => {
+    try {
+        await controlCenter.stopAll();
+        await audit(req, 'system.stop', 'all');
+        res.status(200).json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
 router.get('/status', apiRateLimiter, async (req, res) => {
     let payload = await controlCenter.getStatus();
     payload.currentUser = req.dashboardUser;

@@ -56,6 +56,16 @@ router.post('/:id/run', apiRateLimiter, requirePermission('background.runOnce'),
     }
 });
 
+router.post('/:id/stop', apiRateLimiter, requirePermission('agents.control'), requireCriticalConfirmation, async (req, res) => {
+    try {
+        await controlCenter.stopAssignment(Number(req.params.id));
+        await audit(req, 'assignment.stop', req.params.id);
+        res.status(200).json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
 router.put('/:id', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
     const id = Number(req.params.id);
     const { agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled } = req.body || {};

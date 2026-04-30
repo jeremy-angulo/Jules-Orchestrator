@@ -213,7 +213,7 @@ async function refreshDashboard() {
       apiGet('/api/analytics/metrics?hours=24').catch(() => ({ hours: 24, series: {} })),
       apiGet('/api/health-status?hours=24').catch(() => ({ hours: 24, services: [] })),
       apiGet('/api/agents').catch(() => ({ agents: [] })),
-      apiGet('/api/system/logs').catch(() => ({ logs: [] })),
+      apiGet('/api/logs').catch(() => ({ logs: [] })),
     ]);
 
     state.status = status;
@@ -1341,11 +1341,11 @@ async function savePipeline() {
   try {
     // We update the project config with the pipeline info
     // First we need the existing project config to not overwrite other fields
-    const data = await apiGet('/api/projects-config');
+    const data = await apiGet('/api/projects/config');
     const project = (data.projects || []).find(p => p.id === projectId);
     if (!project) throw new Error('Project configuration not found');
 
-    await apiPost('/api/projects-config', {
+    await apiPost('/api/projects/config', {
       id: project.id,
       github_repo: project.github_repo,
       github_branch: project.github_branch,
@@ -1375,11 +1375,11 @@ async function deletePipeline() {
   setLoading(btn, true);
 
   try {
-    const data = await apiGet('/api/projects-config');
+    const data = await apiGet('/api/projects/config');
     const project = (data.projects || []).find(p => p.id === projectId);
     if (!project) throw new Error('Project configuration not found');
 
-    await apiPost('/api/projects-config', {
+    await apiPost('/api/projects/config', {
       id: project.id,
       github_repo: project.github_repo,
       github_branch: project.github_branch,
@@ -2124,7 +2124,7 @@ async function saveProject() {
   const btn = document.querySelector('#projectModalSave');
   setLoading(btn, true);
   try {
-    await apiPost('/api/projects-config', { id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt });
+    await apiPost('/api/projects/config', { id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt });
     showToast('Project added');
     closeModal('#projectModal');
     await refreshDashboard();
@@ -2299,10 +2299,10 @@ async function init() {
     const isOnline = el.systemToggleBtn.textContent.includes('ONLINE');
     try {
       if (isOnline) {
-        await apiPost('/api/system/stop', null, true);
+        await apiPost('/api/stop', null, true);
         el.systemToggleBtn.textContent = 'System OFFLINE';
       } else {
-        await apiPost('/api/system/start');
+        await apiPost('/api/start');
         el.systemToggleBtn.textContent = 'System ONLINE';
       }
       await refreshDashboard();

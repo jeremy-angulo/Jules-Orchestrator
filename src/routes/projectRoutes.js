@@ -9,9 +9,12 @@ import {
     listAgentSessions, 
     upsertProjectConfig, 
     getProjectConfig, 
+    listProjectsConfig,
     deleteProjectConfig, 
     deleteAssignmentsByProject,
-    listAssignments
+    listAssignments,
+    createAssignment,
+    getAssignment
 } from '../db/database.js';
 import { mergePRWithResult, closePR } from '../api/githubClient.js';
 
@@ -230,6 +233,17 @@ router.post('/:projectId/prs/close-batch', apiRateLimiter, requirePermission('pr
     }
     invalidatePRCache(project.id);
     res.status(200).json({ results });
+});
+
+router.post('/:projectId/pipeline/run', apiRateLimiter, requirePermission('pipelines.run'), async (req, res) => {
+    const { projectId } = req.params;
+    try {
+        const runnerId = await controlCenter.runPipelineNow(projectId);
+        await audit(req, 'pipeline.run', projectId, { runnerId });
+        res.status(202).json({ ok: true, runnerId });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 export default router;
