@@ -323,10 +323,8 @@
         </div>
 
         <div class="form-group">
-          <label class="checkbox-label">
-            <input type="checkbox" id="assignWaitForPR" /> 
-            <span>Wait for previous PR to be merged before next run</span>
-          </label>
+          <label>Concurrent Instances</label>
+          <input type="number" id="assignConcurrency" class="form-control" value="1" min="1" max="10" />
         </div>
 
         <div id="assignCronConfig" style="display:none">
