@@ -2478,13 +2478,19 @@ fetch('/api/status').then(res => {
 }).catch(() => init());
 
 function renderPipelineTimeline(project) {
-  if (!project.locked || (project.lockReason !== 'pipeline' && project.lockReason !== 'pipeline-timeout')) {
+  const pipelineReasons = ['pipeline', 'pipeline-timeout', 'pipeline-work', 'pipeline-wrapup', 'pipeline-buffer'];
+  if (!project.locked || !pipelineReasons.includes(project.lockReason)) {
     return '';
   }
 
   const lockedAt = new Date(project.lockedAt);
   const elapsedMin = Math.round((Date.now() - (project.lockedAt || Date.now())) / 60000);
-  const isTimeout = project.lockReason === 'pipeline-timeout';
+  
+  const reason = project.lockReason;
+  const isTimeout = reason === 'pipeline-timeout';
+  const isWork = reason === 'pipeline-work' || reason === 'pipeline';
+  const isWrapup = reason === 'pipeline-wrapup';
+  const isBuffer = reason === 'pipeline-buffer';
 
   return `
     <div class="pipeline-timeline-card">
@@ -2500,18 +2506,36 @@ function renderPipelineTimeline(project) {
             <p class="step-time">${lockedAt.toLocaleTimeString()}</p>
           </div>
         </div>
+        
         <div class="pipeline-step ${isTimeout ? 'is-warning' : 'is-complete'}">
           <div class="step-icon">${isTimeout ? '⚠️' : '⏳'}</div>
           <div class="step-content">
-            <p class="step-label">${isTimeout ? 'Forced Lock (Timeout)' : 'Waiting for tasks'}</p>
-            <p class="step-desc">${isTimeout ? 'Agents were forcibly closed after 1h wait.' : 'Waiting for active agents to finish.'}</p>
+            <p class="step-label">${isTimeout ? 'Forced Lock' : 'Ready'}</p>
+            <p class="step-desc">${isTimeout ? 'Agents killed.' : 'Repo cleared.'}</p>
           </div>
         </div>
-        <div class="pipeline-step is-active">
-          <div class="step-icon">🚀</div>
+
+        <div class="pipeline-step ${isWork ? 'is-active' : 'is-complete'}">
+          <div class="step-icon">🛠️</div>
           <div class="step-content">
-            <p class="step-label">Stabilization Loop</p>
-            <p class="step-desc">Jules is validating and merging changes...</p>
+            <p class="step-label">Work Phase</p>
+            <p class="step-desc">1h30 - Jules is working.</p>
+          </div>
+        </div>
+
+        <div class="pipeline-step ${isWrapup ? 'is-active' : (isBuffer ? 'is-complete' : '')}">
+          <div class="step-icon">🏁</div>
+          <div class="step-content">
+            <p class="step-label">Closing Phase</p>
+            <p class="step-desc">30m - "Finish here".</p>
+          </div>
+        </div>
+
+        <div class="pipeline-step ${isBuffer ? 'is-active' : ''}">
+          <div class="step-icon">🛑</div>
+          <div class="step-content">
+            <p class="step-label">Final Buffer</p>
+            <p class="step-desc">1h - Hard kill limit.</p>
           </div>
         </div>
       </div>

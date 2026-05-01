@@ -45,24 +45,49 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
       // 3. Jules valide, nettoie et commit. Relance automatique jusqu'à la réussite.
       let success = false;
       const pipelineStartTime = Date.now();
-      const PIPELINE_TIMEOUT_MS = 3 * 60 * 60 * 1000; // 3 heures
+      
+      const PHASE_WORK_MS = 1.5 * 60 * 60 * 1000;      // 1h30
+      const PHASE_WRAPUP_MS = 0.5 * 60 * 60 * 1000;    // 30min
+      const PHASE_BUFFER_MS = 1.0 * 60 * 60 * 1000;    // 1h
+      const TOTAL_TIMEOUT_MS = PHASE_WORK_MS + PHASE_WRAPUP_MS + PHASE_BUFFER_MS;
 
       while (!success) {
+        const elapsed = Date.now() - pipelineStartTime;
+
         if (shouldStop()) {
             log("info", `[${project.id} - Pipeline] 🛑 Arrêt demandé pendant la boucle de stabilisation.`);
             break;
         }
-        if (Date.now() - pipelineStartTime >= PIPELINE_TIMEOUT_MS) {
+        if (elapsed >= TOTAL_TIMEOUT_MS) {
             log("info", `[${project.id} - Pipeline] ⚠️ Timeout global du pipeline atteint (3h). Arrêt des tentatives.`);
             break;
         }
 
-        success = await startAndMonitorSession(prompt, "Pipeline Agent", project, { shouldStop });
+        let feedbackMessage = 'keep going';
+        let currentPhase = 'pipeline-work';
+
+        if (elapsed > (PHASE_WORK_MS + PHASE_WRAPUP_MS)) {
+            // Buffer Phase
+            feedbackMessage = 'FINAL CALL: Finish now and create the PR immediately. No more changes.';
+            currentPhase = 'pipeline-buffer';
+        } else if (elapsed > PHASE_WORK_MS) {
+            // Wrap-up Phase
+            feedbackMessage = 'Time is almost up. Please wrap up your current work, ensure everything is clean, and create the Pull Request now.';
+            currentPhase = 'pipeline-wrapup';
+        }
+
+        await lockProject(project.id, currentPhase);
+
+        success = await startAndMonitorSession(prompt, "Pipeline Agent", project, { 
+            shouldStop,
+            feedbackMessage
+        });
+
         if (success) {
           log("info", `[${project.id} - Pipeline] ✅ Pipeline terminée avec succès. Tentative de merge automatique...`);
           await mergeOpenPRs(project);
         } else {
-          log("info", `[${project.id} - Pipeline] ⚠️ Jules a échoué. On relance l'agent jusqu'à succès...`);
+          log("info", `[${project.id} - Pipeline] ⚠️ Jules a échoué (Phase: ${currentPhase}). On relance l'agent...`);
           await sleep(30000); // Attente avant de réessayer
         }
       }

@@ -165,6 +165,7 @@ export async function getActivity(agentName, sessionId, activityId) {
 export async function monitorExistingSession(sessionName, agentName, project, options = {}) {
   const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
   const requestOptions = options.preferredTokenId ? { preferredTokenId: String(options.preferredTokenId) } : {};
+  const feedbackMessage = options.feedbackMessage || 'keep going';
 
   const state = await getSession(agentName, sessionName, requestOptions).catch(() => null);
   if (!state) return false;
@@ -182,7 +183,7 @@ export async function monitorExistingSession(sessionName, agentName, project, op
     if (s.state === 'AWAITING_PLAN_APPROVAL') {
       await approvePlan(agentName, sessionName, requestOptions).catch(() => {});
     } else if (s.state === 'AWAITING_USER_FEEDBACK') {
-      await sendMessage(agentName, sessionName, 'keep going', requestOptions).catch(() => {});
+      await sendMessage(agentName, sessionName, feedbackMessage, requestOptions).catch(() => {});
     } else if (s.state === 'COMPLETED') {
       const hasPR = s.outputs?.some(o => o.pullRequest);
       if (!hasPR) return false;
@@ -205,6 +206,8 @@ export async function startAndMonitorSession(instruction, agentName, project, op
   const shouldStop = typeof options.shouldStop === 'function' ? options.shouldStop : () => false;
   const preferredTokenId = options.preferredTokenId ? String(options.preferredTokenId) : null;
   const requestOptions = preferredTokenId ? { preferredTokenId } : {};
+  const feedbackMessage = options.feedbackMessage || 'keep going';
+
   while (attempt < MAX_RETRIES) {
     if (shouldStop()) {
       log("info", `[${project.id} - ${agentName}] 🛑 Arrêt demandé avant création de session.`);
@@ -250,8 +253,8 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         if (state.state === 'AWAITING_PLAN_APPROVAL') {
           await approvePlan(agentName, sessionName, requestOptions);
         } else if (state.state === 'AWAITING_USER_FEEDBACK') {
-          log("info", `[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "keep going"...`);
-          await sendMessage(agentName, sessionName, "keep going", requestOptions);
+          log("info", `[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "${feedbackMessage}"...`);
+          await sendMessage(agentName, sessionName, feedbackMessage, requestOptions);
         } else if (state.state === 'COMPLETED') {
           // Anti-Triche : Vérifier qu'une PR a bien été créée
           let hasPR = false;
