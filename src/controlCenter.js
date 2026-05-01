@@ -609,15 +609,24 @@ export class ControlCenter {
           await sleepInterruptible(LOCK_WAIT_MS, () => runner.shouldStop);
           return;
         }
+
+        // Concurrency management
+        const concurrency = current.concurrency || 1;
+        const currentRunning = Array.from(this.runners.values()).filter(r => 
+          r.type === 'assignment-loop' && 
+          r.details.assignmentId === assignment.id && 
+          r.status === 'running'
+        ).length;
+
+        if (currentRunning >= concurrency) {
+          await sleepInterruptible(10000, () => runner.shouldStop);
+          return;
+        }
+
         await incrementTasks(project.id);
         try {
           const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
           
-          if (current.wait_for_pr_merge) {
-            this.log('info', `Waiting for PR merge for assignment ${assignment.id} in project ${project.id}`);
-            await mergeOpenPRs(project);
-          }
-
           await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
             shouldStop: () => runner.shouldStop,
             onSessionCreated: async (sessionId) => {
@@ -668,11 +677,6 @@ export class ControlCenter {
       await incrementTasks(project.id);
       try {
         const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
-
-        if (current.wait_for_pr_merge) {
-          this.log('info', `Waiting for PR merge for assignment ${assignment.id} (cron) in project ${project.id}`);
-          await mergeOpenPRs(currentProject);
-        }
 
         await startAndMonitorSession(prompt, agent.name, currentProject, { 
           shouldStop: () => runner.shouldStop,

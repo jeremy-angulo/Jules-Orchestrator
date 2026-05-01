@@ -129,7 +129,6 @@ export async function initTables() {
       mode TEXT NOT NULL DEFAULT 'loop',
       loop_pause_ms INTEGER DEFAULT 300000,
       cron_schedule TEXT,
-      wait_for_pr_merge BOOLEAN DEFAULT 0,
       enabled BOOLEAN DEFAULT 1,
       last_run_at INTEGER,
       total_runs INTEGER DEFAULT 0,
@@ -432,11 +431,11 @@ export async function getAssignment(id) {
   return rs.rows[0];
 }
 export async function createAssignment(a) {
-  const rs = await executeWithRetry({ sql: 'INSERT INTO assignments (project_id, agent_id, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled, concurrency, created_at, updated_at, custom_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [a.project_id, a.agent_id, a.mode, a.loop_pause_ms, a.cron_schedule, a.wait_for_pr_merge ? 1 : 0, a.enabled !== undefined ? (a.enabled ? 1 : 0) : 1, a.concurrency || 1, Date.now(), Date.now(), a.custom_prompt] });
+  const rs = await executeWithRetry({ sql: 'INSERT INTO assignments (project_id, agent_id, mode, loop_pause_ms, cron_schedule, enabled, concurrency, created_at, updated_at, custom_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [a.project_id, a.agent_id, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled !== undefined ? (a.enabled ? 1 : 0) : 1, a.concurrency || 1, Date.now(), Date.now(), a.custom_prompt] });
   return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : null;
 }
 export async function updateAssignment(id, a) {
-  await executeWithRetry({ sql: 'UPDATE assignments SET agent_id=?, custom_prompt=?, mode=?, loop_pause_ms=?, cron_schedule=?, wait_for_pr_merge=?, enabled=?, concurrency=?, updated_at=? WHERE id=?', args: [a.agent_id, a.custom_prompt, a.mode, a.loop_pause_ms, a.cron_schedule, a.wait_for_pr_merge ? 1 : 0, a.enabled ? 1 : 0, a.concurrency || 1, Date.now(), id] });
+  await executeWithRetry({ sql: 'UPDATE assignments SET agent_id=?, custom_prompt=?, mode=?, loop_pause_ms=?, cron_schedule=?, enabled=?, concurrency=?, updated_at=? WHERE id=?', args: [a.agent_id, a.custom_prompt, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled ? 1 : 0, a.concurrency || 1, Date.now(), id] });
 }
 export async function deleteAssignment(id) {
   await executeWithRetry({ sql: 'DELETE FROM assignments WHERE id = ?', args: [id] });
