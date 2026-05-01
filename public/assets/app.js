@@ -307,9 +307,9 @@ function renderOverview() {
   );
 
   const feed = el.eventsFeed;
-  const events = (state.status?.events || []).slice(0, 20);
+  const recentEvents = (state.status?.events || []).slice(0, 20);
 
-  if (events.length === 0) {
+  if (recentEvents.length === 0) {
     feed.innerHTML = '<li class="feed-item muted">No recent events.</li>';
   } else {
     if (feed.children.length > 0 && feed.children[0].classList.contains('muted')) {
@@ -321,7 +321,7 @@ function renderOverview() {
     const existingIds = new Set(Array.from(feed.children).map(c => c.dataset.eventId));
     
     // Find new events and prepend them, oldest-of-the-new first
-    const newEvents = events.filter(ev => !existingIds.has(ev.id));
+    const newEvents = recentEvents.filter(ev => !existingIds.has(ev.id));
     for (const ev of newEvents.reverse()) {
       const li = document.createElement('li');
       li.className = 'feed-item';
@@ -335,7 +335,7 @@ function renderOverview() {
     }
 
     // Remove old event elements that are no longer in the top 20
-    const newEventIds = new Set(events.map(e => e.id));
+    const newEventIds = new Set(recentEvents.map(e => e.id));
     for (const child of Array.from(feed.children)) {
       if (child.dataset.eventId && !newEventIds.has(child.dataset.eventId)) {
         child.remove();
