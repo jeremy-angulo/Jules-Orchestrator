@@ -306,19 +306,45 @@ function renderOverview() {
     createMetric('Agents', String(state.agents.length), `${state.assignments?.length || 0} assignments`, '#a855f7'),
   );
 
-  el.eventsFeed.innerHTML = '';
+  const feed = el.eventsFeed;
+  const events = (state.status?.events || []).slice(0, 20);
+
   if (events.length === 0) {
-    el.eventsFeed.innerHTML = '<li class="feed-item muted">No recent events.</li>';
+    feed.innerHTML = '<li class="feed-item muted">No recent events.</li>';
   } else {
-    for (const ev of events.slice(0, 20)) {
+    if (feed.children.length > 0 && feed.children[0].classList.contains('muted')) {
+      feed.innerHTML = ''; // Clear "no events" message
+    }
+
+    const wasScrolledToTop = feed.scrollTop < 5;
+    const oldScrollHeight = feed.scrollHeight;
+    const existingIds = new Set(Array.from(feed.children).map(c => c.dataset.eventId));
+    
+    // Find new events and prepend them, oldest-of-the-new first
+    const newEvents = events.filter(ev => !existingIds.has(ev.id));
+    for (const ev of newEvents.reverse()) {
       const li = document.createElement('li');
       li.className = 'feed-item';
+      li.dataset.eventId = ev.id;
       li.innerHTML = `
         <span class="feed-time mono">${new Date(ev.at).toLocaleTimeString()}</span>
         <span class="dot ${pickLevel(ev.level)}"></span>
         <span class="feed-message">${escapeHtml(ev.message || '')}</span>
       `;
-      el.eventsFeed.appendChild(li);
+      feed.prepend(li);
+    }
+
+    // Remove old event elements that are no longer in the top 20
+    const newEventIds = new Set(events.map(e => e.id));
+    for (const child of Array.from(feed.children)) {
+      if (child.dataset.eventId && !newEventIds.has(child.dataset.eventId)) {
+        child.remove();
+      }
+    }
+
+    if (wasScrolledToTop) {
+      const newScrollHeight = feed.scrollHeight;
+      feed.scrollTop += newScrollHeight - oldScrollHeight;
     }
   }
 
@@ -1620,6 +1646,9 @@ function renderSessions() {
     createChip(`Failed ${cFailed}`, cFailed > 0 ? 'bad' : ''),
   );
 
+  const wasScrolledToTop = window.scrollY < 5;
+  const oldPageHeight = wasScrolledToTop ? document.body.scrollHeight : 0;
+
   el.sessionsRows.innerHTML = '';
   if (runners.length === 0) {
     el.sessionsRows.innerHTML = '<tr><td colspan="5" class="muted">No sessions.</td></tr>';
@@ -1647,6 +1676,11 @@ function renderSessions() {
       </td>
     `;
     el.sessionsRows.appendChild(tr);
+  }
+
+  if (wasScrolledToTop) {
+    const newPageHeight = document.body.scrollHeight;
+    window.scrollBy(0, newPageHeight - oldPageHeight);
   }
 }
 
@@ -1736,10 +1770,14 @@ function renderLogs() {
   if (!el.systemConsole) return;
   const logs = state.logs || [];
   
+  const consoleEl = el.systemConsole;
+  
   // Only re-render if count changed or empty to avoid jitter
-  if (el.systemConsole.children.length === logs.length && logs.length > 0) return;
+  if (consoleEl.children.length === logs.length && logs.length > 0) return;
 
-  el.systemConsole.innerHTML = '';
+  const wasNearBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 50;
+
+  consoleEl.innerHTML = '';
   // Logs are unshifted (newest first) in CC, but we want to show them in order in a console
   const displayLogs = [...logs].reverse();
 
@@ -1756,14 +1794,14 @@ function renderLogs() {
       <span class="log-msg">${escapeHtml(log.message)}</span>
       ${metaStr ? `<span class="log-meta">${escapeHtml(metaStr)}</span>` : ''}
     `;
-    el.systemConsole.appendChild(div);
+    consoleEl.appendChild(div);
   }
 
   if (logs.length === 0) {
-    el.systemConsole.innerHTML = '<div class="muted">No logs available.</div>';
-  } else {
+    consoleEl.innerHTML = '<div class="muted">No logs available.</div>';
+  } else if (wasNearBottom) {
     // Auto-scroll to bottom
-    el.systemConsole.scrollTop = el.systemConsole.scrollHeight;
+    consoleEl.scrollTop = consoleEl.scrollHeight;
   }
 }
 
