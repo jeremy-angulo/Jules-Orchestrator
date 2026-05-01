@@ -17,9 +17,9 @@ router.get('/', apiRateLimiter, async (req, res) => {
 });
 
 router.post('/', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
-    const { project_id, agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge } = req.body || {};
+    const { project_id, agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, concurrency } = req.body || {};
     try {
-        const id = await createAssignment({ project_id, agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge });
+        const id = await createAssignment({ project_id, agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, concurrency });
         const assignment = await getAssignment(id);
         if (!assignment) throw new Error('Failed to retrieve newly created assignment');
         
@@ -76,7 +76,7 @@ router.post('/:id/stop', apiRateLimiter, requirePermission('agents.control'), re
 
 router.put('/:id', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
     const id = Number(req.params.id);
-    const { agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled } = req.body || {};
+    const { agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled, concurrency } = req.body || {};
     
     const current = await getAssignment(id);
     if (!current) return res.status(404).json({ error: 'Assignment not found.' });
@@ -89,7 +89,8 @@ router.put('/:id', apiRateLimiter, requirePermission('agents.control'), async (r
             loop_pause_ms, 
             cron_schedule, 
             wait_for_pr_merge, 
-            enabled: enabled !== undefined ? enabled : current.enabled 
+            enabled: enabled !== undefined ? enabled : current.enabled,
+            concurrency
         });
         
         const updated = await getAssignment(id);

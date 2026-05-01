@@ -26,7 +26,8 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     }
   }
   // Use dynamic token logic via tokenRotation.js
-  const token = await getAvailableToken(agentName, requestOptions);
+  const tokenData = await getAvailableToken(agentName, requestOptions);
+  const token = tokenData.token;
   // Track usage for sessions creation / messages
   if (method === 'POST' && (endpoint === '/sessions' || endpoint.includes(':sendMessage'))) {
     await recordApiCall(token, agentName);
@@ -72,7 +73,11 @@ export async function julesAPI(agentName, endpoint, method = 'GET', body = null,
     }
     // Some endpoints like DELETE might return empty responses
     const text = await res.text();
-    return text ? JSON.parse(text) : {};
+    const result = text ? JSON.parse(text) : {};
+    if (result && typeof result === 'object') {
+        result._tokenInfo = { index: tokenData.index, label: tokenData.label };
+    }
+    return result;
   } catch (error) {
     log("error", `[julesAPI] Network Error:`, error);
     recordServiceCheck('jules_api', false, {

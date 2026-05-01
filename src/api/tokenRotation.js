@@ -65,9 +65,9 @@ export async function getAvailableToken(agentName, options = {}) {
 
   const preferredTokenId = options.preferredTokenId ? String(options.preferredTokenId) : null;
   if (preferredTokenId) {
-    const preferred = inventory.find((entry) => entry.id === preferredTokenId || entry.email === preferredTokenId);
+    const preferred = inventory.find((entry) => entry.id === preferredTokenId || String(entry.index) === preferredTokenId);
     if (preferred) {
-      return preferred.token;
+      return preferred;
     }
   }
 
@@ -81,7 +81,7 @@ export async function getAvailableToken(agentName, options = {}) {
       const utilization = entry.usage24h / entry.limit24h;
       if (utilization < minUtilization) {
         minUtilization = utilization;
-        bestToken = entry.token;
+        bestToken = entry;
       }
     }
   }
@@ -93,10 +93,10 @@ export async function getAvailableToken(agentName, options = {}) {
       const utilization = entry.usage24h / entry.limit24h;
       if (utilization < minUtilization) {
         minUtilization = utilization;
-        bestToken = entry.token;
+        bestToken = entry;
       }
     }
   }
 
-  return bestToken || inventory[0].token;
+  return bestToken || inventory[0];
 }
