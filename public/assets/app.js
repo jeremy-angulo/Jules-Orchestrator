@@ -404,11 +404,27 @@ async function handleProjectsClick(e) {
       switchView('project-detail');
     } else if (action === 'run-agent-once') {
       openRunAgentModal(projectId);
-    } else if (action === 'toggle-lock') {
+    if (action === 'toggle-lock') {
       const p = (state.status?.projects || []).find(x => x.id === projectId);
-      const endpoint = p?.locked ? `/api/projects/${projectId}/unlock` : `/api/projects/${projectId}/lock`;
-      await apiPost(endpoint, null, true);
-      showToast(`Project ${p?.locked ? 'unlocked' : 'locked'}`);
+      if (!p) return;
+
+      const wasLocked = p.locked;
+      const endpoint = wasLocked ? `/api/projects/${projectId}/unlock` : `/api/projects/${projectId}/lock`;
+
+      // Optimistic UI update
+      p.locked = !wasLocked;
+      renderProjects(); 
+      renderSidebarProjects();
+
+      try {
+        await apiPost(endpoint, null, true);
+        showToast(`Project ${wasLocked ? 'unlocked' : 'locked'}`);
+      } catch (err) {
+        p.locked = wasLocked; // Revert on failure
+        renderProjects();
+        renderSidebarProjects();
+        throw err;
+      }
       await refreshDashboard();
     } else if (action === 'run-pipeline') {
       await apiPost(`/api/projects/${projectId}/pipeline/run`, null, true);
@@ -1262,9 +1278,31 @@ async function handleDetailClick(e) {
   try {
     if (action === 'toggle-lock-detail') {
       const p = (state.status?.projects || []).find(x => x.id === projectId);
-      const ep = p?.locked ? `/api/projects/${projectId}/unlock` : `/api/projects/${projectId}/lock`;
-      await apiPost(ep, null, true);
-      showToast(p?.locked ? 'Project unlocked' : 'Project locked');
+      if (!p) return;
+      const wasLocked = p.locked;
+      const endpoint = wasLocked ? `/api/projects/${projectId}/unlock` : `/api/projects/${projectId}/lock`;
+      
+      // Optimistic UI update
+      p.locked = !wasLocked;
+      if (state.projectDetailData && state.projectDetailData.project) {
+        state.projectDetailData.project.locked = !wasLocked;
+      }
+      renderProjectDetail(state.projectDetailData, state.assignments);
+      renderSidebarProjects();
+
+      try {
+        await apiPost(ep, null, true);
+        showToast(wasLocked ? 'Project unlocked' : 'Project locked');
+      } catch (err) {
+        p.locked = wasLocked;
+        if (state.projectDetailData && state.projectDetailData.project) {
+          state.projectDetailData.project.locked = wasLocked;
+        }
+        renderProjectDetail(state.projectDetailData, state.assignments);
+        renderSidebarProjects();
+        throw err;
+      }
+      await refreshDashboard();
     } else if (action === 'run-pipeline') {
       await apiPost(`/api/projects/${projectId}/pipeline/run`, null, true);
       showToast('Pipeline started');
@@ -1563,18 +1601,29 @@ function renderSessions() {
 
   el.sessionsRows.innerHTML = '';
   if (runners.length === 0) {
-    el.sessionsRows.innerHTML = '<tr><td colspan="6" class="muted">No sessions.</td></tr>';
+    el.sessionsRows.innerHTML = '<tr><td colspan="5" class="muted">No sessions.</td></tr>';
     return;
   }
   for (const r of runners) {
     const tr = document.createElement('tr');
+    // Extract a cleaner display name for the session/agent
+    const displayName = r.label || r.type || 'Jules Agent';
+    const shortId = r.sessionId ? r.sessionId.split('/').pop() : '-';
+    const julesUrl = r.sessionId ? `https://jules.google.com/session/${shortId}` : null;
+
     tr.innerHTML = `
-      <td class="mono small">${escapeHtml(r.id.substring(0, 40))}</td>
-      <td>${escapeHtml(r.projectId)}</td>
-      <td>${escapeHtml(r.label || r.type)}</td>
+      <td>
+        <strong>${escapeHtml(displayName)}</strong>
+        <p class="muted small mono">${escapeHtml(r.projectId)}</p>
+      </td>
+      <td>
+        ${julesUrl ? `<a href="${julesUrl}" target="_blank" rel="noopener" class="pr-link mono small">${shortId} ↗</a>` : '<span class="muted small">—</span>'}
+      </td>
       <td><span class="chip ${r.status === 'running' ? 'ok' : r.status === 'failed' ? 'bad' : ''}">${r.status}</span></td>
       <td>${fmtSince(r.startedAt)}</td>
-      <td>${fmtSince(r.lastHeartbeatAt)}</td>
+      <td>
+        <button class="btn btn-ghost btn-small" data-action="view-session" data-runner="${r.id}" ${!r.sessionId ? 'disabled' : ''}>Logs</button>
+      </td>
     `;
     el.sessionsRows.appendChild(tr);
   }
