@@ -509,6 +509,10 @@ function renderProjectDetail(data, assignments) {
     </span>
     <span class="detail-project-name">${escapeHtml(project.id)}</span>
     <span class="detail-project-meta">${escapeHtml(project.githubRepo)} · ${escapeHtml(project.githubBranch)}</span>
+    <div style="margin-left:auto;display:flex;gap:6px">
+      <button class="btn btn-ghost btn-small" data-action="edit-project" data-project="${project.id}">Edit</button>
+      <button class="btn btn-danger btn-small" data-action="delete-project" data-project="${project.id}">Delete</button>
+    </div>
   `;
 
   el.projectDetailContent.innerHTML = '';
@@ -1347,6 +1351,15 @@ async function handleDetailClick(e) {
     } else if (action === 'stop-runner') {
       await apiPost(`/api/runners/${runnerId}/stop`, null, true);
       showToast('Runner stopped');
+    } else if (action === 'edit-project') {
+      openProjectModal(projectId);
+      setLoading(btn, false);
+      return;
+    } else if (action === 'delete-project') {
+      if (!confirm(`Delete project "${projectId}"? This will also stop all running agents and delete assignments.`)) { setLoading(btn, false); return; }
+      await apiDelete(`/api/projects/${projectId}/delete`, true);
+      showToast('Project deleted');
+      switchView('projects');
     }
     await refreshDashboard();
     if (state.selectedProjectDetail) await fetchProjectDetail(state.selectedProjectDetail);
@@ -2168,6 +2181,38 @@ async function confirmRunAgent() {
 // =========================================================
 // Add Project Modal
 // =========================================================
+function openProjectModal(projectId = null) {
+  const modal = document.querySelector('#projectModal');
+  const title = document.querySelector('#projectModal h2');
+  const saveBtn = document.querySelector('#projectModalSave');
+  const idInput = document.querySelector('#projectModalId');
+  
+  if (projectId) {
+    const p = (state.status?.projects || []).find(x => x.id === projectId);
+    title.textContent = 'Edit Project';
+    saveBtn.textContent = 'Save Changes';
+    idInput.value = projectId;
+    idInput.disabled = true;
+    document.querySelector('#projectModalRepo').value = p?.githubRepo || '';
+    document.querySelector('#projectModalBranch').value = p?.githubBranch || 'main';
+    document.querySelector('#projectModalToken').value = ''; // Don't show token
+    // We might need to fetch the full config for cron/prompt
+    apiGet('/api/projects/config').then(data => {
+      const config = (data.projects || []).find(x => x.id === projectId);
+      document.querySelector('#projectModalPipelineCron').value = config?.pipeline_cron || '';
+      document.querySelector('#projectModalPipelinePrompt').value = config?.pipeline_prompt || '';
+    });
+  } else {
+    title.textContent = 'Add Project';
+    saveBtn.textContent = 'Add Project';
+    idInput.value = '';
+    idInput.disabled = false;
+    document.querySelectorAll('#projectModal input, #projectModal textarea').forEach(i => { i.value = ''; });
+    document.querySelector('#projectModalBranch').value = 'main';
+  }
+  modal.classList.add('show');
+}
+
 async function saveProject() {
   const id = document.querySelector('#projectModalId').value.trim();
   const github_repo = document.querySelector('#projectModalRepo').value.trim();
@@ -2179,13 +2224,21 @@ async function saveProject() {
   if (!id) return showToast('Project ID is required', true);
   if (!github_repo) return showToast('GitHub repo is required', true);
 
+  const isEdit = document.querySelector('#projectModalId').disabled;
   const btn = document.querySelector('#projectModalSave');
   setLoading(btn, true);
   try {
-    await apiPost('/api/projects/config', { id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt });
-    showToast('Project added');
+    const payload = { id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt };
+    if (isEdit) {
+      await apiPut(`/api/projects/${id}`, payload);
+      showToast('Project updated');
+    } else {
+      await apiPost('/api/projects/config', payload);
+      showToast('Project added');
+    }
     closeModal('#projectModal');
     await refreshDashboard();
+    if (state.selectedProjectDetail === id) await fetchProjectDetail(id);
   } catch (err) {
     showToast(err.message, true);
   } finally {
@@ -2372,8 +2425,7 @@ async function init() {
 
   // Add project btn
   el.addProjectBtn?.addEventListener('click', () => {
-    document.querySelectorAll('#projectModal input, #projectModal textarea').forEach(i => { i.value = ''; });
-    document.querySelector('#projectModal').classList.add('show');
+    openProjectModal();
   });
 
   // Refresh sources btn

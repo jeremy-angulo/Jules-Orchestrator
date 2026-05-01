@@ -181,6 +181,21 @@ router.post('/:projectId/tasks/reset', apiRateLimiter, requirePermission('projec
     res.status(200).json({ ok: true, projectId, activeTasks: 0 });
 });
 
+router.put('/:projectId', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
+    const { projectId } = req.params;
+    const { github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt } = req.body || {};
+    if (!github_repo?.trim()) return res.status(400).json({ error: 'github_repo is required.' });
+    try {
+        await upsertProjectConfig({ id: projectId, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt });
+        const row = await getProjectConfig(projectId);
+        await controlCenter.init();
+        await audit(req, 'project.update', projectId, { github_repo });
+        res.status(200).json({ ok: true, project: row });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
 router.delete('/:projectId/delete', apiRateLimiter, requirePermission('projects.delete'), requireCriticalConfirmation, async (req, res) => {
     const { projectId } = req.params;
     try {
