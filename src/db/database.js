@@ -1,8 +1,12 @@
 import { createClient } from '@libsql/client';
 
-const dbPath = process.env.ORCHESTRATOR_DB_PATH || 'orchestrator.db';
-const url = process.env.TURSO_DATABASE_URL || `file:${dbPath}`;
-const authToken = process.env.TURSO_AUTH_TOKEN;
+const isTestEnv = process.env.NODE_ENV === 'test';
+
+const dbPath = process.env.ORCHESTRATOR_DB_PATH || (isTestEnv ? 'test-orchestrator.db' : 'orchestrator.db');
+const url = (isTestEnv || !process.env.TURSO_DATABASE_URL)
+  ? `file:${dbPath}`
+  : process.env.TURSO_DATABASE_URL;
+const authToken = isTestEnv ? undefined : process.env.TURSO_AUTH_TOKEN;
 
 const client = createClient({
   url,
