@@ -45,8 +45,6 @@ async function main() {
   try {
     await controlCenter.init();
     console.log('ControlCenter initialized.');
-    await controlCenter.startAll();
-    console.log('Assignment runners and schedulers started.');
   } catch (err) {
     console.error('Fatal error while starting ControlCenter:', err);
   }

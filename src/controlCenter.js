@@ -272,6 +272,30 @@ export class ControlCenter {
     return this.runners.has(loopId) || this.runners.has(cronId) || this.runners.has(resumeId);
   }
 
+  async removeProject(projectId) {
+    const project = this.projectById.get(projectId);
+    if (!project) return;
+
+    // 1. Stop all runners for this project
+    for (const runner of this.runners.values()) {
+      if (runner.projectId === projectId) {
+        await this.stopRunner(runner.id);
+      }
+    }
+
+    // 2. Stop pipeline scheduler
+    const pipelineRunnerId = this.makeRunnerId(projectId, 'pipeline-scheduler');
+    await this.stopRunner(pipelineRunnerId);
+    this.systemRunners.perProjectPipelines.delete(projectId);
+
+    // 3. Remove from maps
+    this.projectById.delete(projectId);
+    this.projects = this.projects.filter(p => p.id !== projectId);
+    this.projectStats.delete(projectId);
+    
+    this.log('info', 'Project removed from ControlCenter', { projectId });
+  }
+
   async stopAssignment(assignmentId) {
     const loopId = `assignment:${assignmentId}:loop`;
     const cronId = `assignment:${assignmentId}:cron`;

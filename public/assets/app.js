@@ -404,7 +404,7 @@ async function handleProjectsClick(e) {
       switchView('project-detail');
     } else if (action === 'run-agent-once') {
       openRunAgentModal(projectId);
-    if (action === 'toggle-lock') {
+    } else if (action === 'toggle-lock') {
       const p = (state.status?.projects || []).find(x => x.id === projectId);
       if (!p) return;
 
@@ -1303,7 +1303,7 @@ async function handleDetailClick(e) {
       renderSidebarProjects();
 
       try {
-        await apiPost(ep, null, true);
+        await apiPost(endpoint, null, true);
         showToast(wasLocked ? 'Project unlocked' : 'Project locked');
       } catch (err) {
         p.locked = wasLocked;

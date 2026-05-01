@@ -60,7 +60,10 @@ test('scheduleBuildAndMergePipeline - executes callback logic', async (t) => {
          return { ok: true, text: async () => JSON.stringify({ name: "sessions/1" }) };
      } else if (fetchCallCount === 2) {
          // Get session -> return completed with PR to simulate success
-         return { ok: true, text: async () => JSON.stringify({ state: "COMPLETED", outputs: [{ pullRequest: {} }] }) };
+         return { ok: true, text: async () => JSON.stringify({ state: "COMPLETED", outputs: [{ pullRequest: { url: "https://github.com/test/pull/1" } }] }) };
+     } else if (fetchCallCount === 3) {
+         // List open PRs
+         return { ok: true, text: async () => JSON.stringify([]), json: async () => [] };
      }
      return { ok: false };
   });
@@ -71,7 +74,7 @@ test('scheduleBuildAndMergePipeline - executes callback logic', async (t) => {
   // Manually run the scheduled task
   await tasks[0]();
 
-  assert.strictEqual(fetchCallCount, 2, 'Should have made 2 fetch calls for a successful pipeline');
+  assert.strictEqual(fetchCallCount, 3, 'Should have made 3 fetch calls for a successful pipeline');
   assert.strictEqual(await db.isProjectLocked('test-pipeline-1'), false, 'Project should be unlocked after');
 });
 
@@ -106,16 +109,16 @@ test('scheduleBuildAndMergePipeline - skips PR if session fails', async (t) => {
          return { ok: true, text: async () => JSON.stringify({ name: "sessions/2" }) };
      } else if (fetchCallCount === 4) {
          // Get session retry -> SUCCESS
-         return { ok: true, text: async () => JSON.stringify({ state: "COMPLETED", outputs: [{ pullRequest: {} }] }) };
+         return { ok: true, text: async () => JSON.stringify({ state: "COMPLETED", outputs: [{ pullRequest: { url: "https://github.com/test/pull/124" } }] }) };
      } else if (fetchCallCount === 5) {
-         // Github create PR
-         return { ok: true, json: async () => ({ number: 124 }) };
+         // List open PRs
+         return { ok: true, json: async () => [{ number: 124, title: "Test PR" }] };
      } else if (fetchCallCount === 6) {
          // Github get PR status (polling mergeable_state)
          return { ok: true, json: async () => ({ number: 124, mergeable: true, merged: false }) };
      } else if (fetchCallCount === 7) {
          // Github merge PR
-         return { ok: true };
+         return { ok: true, json: async () => ({ merged: true }), text: async () => JSON.stringify({ merged: true }) };
      }
      return { ok: false };
   });

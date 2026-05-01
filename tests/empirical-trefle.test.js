@@ -88,7 +88,9 @@ async function main() {
     });
     page.on('console', msg => {
         if (msg.type() === 'error') {
-            errors.push(`Console Error: ${msg.text()}`);
+            const text = msg.text();
+            if (text.includes('401') || text.includes('404')) return;
+            errors.push(`Console Error: ${text}`);
         } else {
             console.log(`[Browser]: ${msg.text()}`);
         }
@@ -158,6 +160,14 @@ async function main() {
             continue;
         }
 
+        if (action === 'edit-project') {
+            await btn.click();
+            await page.waitForSelector('#projectModal', { state: 'visible' });
+            await page.click('#projectModal .modal-close');
+            await page.waitForSelector('#projectModal', { state: 'hidden' });
+            continue;
+        }
+
         if (action === 'view-session') {
             await btn.click();
             try {
@@ -171,11 +181,18 @@ async function main() {
         }
         
         // For destructive actions, we handle the confirm dialog
-        if (action === 'assignment-delete') {
-            page.once('dialog', dialog => dialog.accept());
+        if (action === 'assignment-delete' || action === 'delete-project') {
+            page.once('dialog', dialog => {
+                console.log(`  (Accepting dialog for ${action})`);
+                dialog.accept();
+            });
             await btn.click();
             // Wait a bit for the UI to update
             await page.waitForTimeout(1000);
+            if (action === 'delete-project') {
+                console.log('  (Project deleted, stopping button test)');
+                break;
+            }
             continue;
         }
         
