@@ -2051,23 +2051,27 @@ function switchCronFreqTab(container, freq) {
 // =========================================================
 function openAssignmentModal(projectId, existing = null) {
   const modal = document.querySelector('#assignmentModal');
+  if (!modal) return;
   document.querySelector('#assignmentModalTitle').textContent = existing ? 'Edit Assignment' : 'Add Assignment';
   document.querySelector('#assignmentModalId').value = existing?.id || '';
   document.querySelector('#assignmentModalProjectId').value = projectId;
 
   // Populate agent dropdown
   const sel = document.querySelector('#assignmentModalAgent');
-  const agentOptions = state.agents.map(a => `<option value="${a.id}" ${existing?.agent_id === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+  const agents = state.agents || [];
+  const agentOptions = agents.map(a => `<option value="${a.id}" ${existing?.agent_id === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
   sel.innerHTML = `<option value="custom" ${existing && !existing.agent_id ? 'selected' : ''}>-- Custom --</option>${agentOptions}`;
 
   const customBox = document.querySelector('#assignCustomPromptBox');
   const customInput = document.querySelector('#assignCustomPrompt');
-  customInput.value = existing?.custom_prompt || '';
+  if (customInput) customInput.value = existing?.custom_prompt || '';
   
-  sel.onchange = () => {
-    customBox.style.display = sel.value === 'custom' ? '' : 'none';
-  };
-  sel.onchange();
+  if (sel) {
+    sel.onchange = () => {
+      if (customBox) customBox.style.display = sel.value === 'custom' ? '' : 'none';
+    };
+    sel.onchange();
+  }
 
   // Mode
   const mode = existing?.mode || 'loop';
@@ -2077,14 +2081,17 @@ function openAssignmentModal(projectId, existing = null) {
   // Loop pause
   const pauseMs = existing?.loop_pause_ms || 300000;
   const isHours = pauseMs >= 3600000 && pauseMs % 3600000 === 0;
-  document.querySelector('#assignLoopPauseUnit').value = isHours ? '3600000' : '60000';
-  document.querySelector('#assignLoopPauseVal').value = isHours ? pauseMs / 3600000 : Math.round(pauseMs / 60000);
+  const pauseUnitEl = document.querySelector('#assignLoopPauseUnit');
+  const pauseValEl = document.querySelector('#assignLoopPauseVal');
+  if (pauseUnitEl) pauseUnitEl.value = isHours ? '3600000' : '60000';
+  if (pauseValEl) pauseValEl.value = isHours ? pauseMs / 3600000 : Math.round(pauseMs / 60000);
 
   // Cron builder
   setCronBuilderFromExpr('#assignCronBuilder', '#assignCronExpr', existing?.cron_schedule || '');
 
   // Concurrent instances
-  document.querySelector('#assignConcurrency').value = existing?.concurrency || 1;
+  const concurrencyEl = document.querySelector('#assignConcurrency');
+  if (concurrencyEl) concurrencyEl.value = existing?.concurrency || 1;
 
   modal.classList.add('show');
 }
