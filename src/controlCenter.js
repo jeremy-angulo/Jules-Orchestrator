@@ -7,6 +7,7 @@ import {
   scheduleBuildAndMergePipeline,
   runBuildAndMergePipelineOnce
 } from './agents/pipeline.js';
+import { runSiteCheckCycle } from './services/siteCheckService.js';
 import {
   initProjectState,
   isProjectLocked,
@@ -26,7 +27,12 @@ import {
   recordAssignmentRun,
   recordAgentSessionStart,
   recordAgentSessionEnd,
-  getLastAgentSession
+  getLastAgentSession,
+  createJournalEntry,
+  closeJournalEntry,
+  getSiteCheckConfig,
+  updateSiteCheckConfig,
+  listProjectsConfig as listAllProjectsConfig
 } from './db/database.js';
 import { sendOpsAlert } from './utils/alerting.js';
 import { getTokenStatusSummary } from './api/tokenRotation.js';
@@ -37,6 +43,13 @@ const LOCK_WAIT_MS = 30000;
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+// Extracts a concise intent (≤300 chars) from an agent prompt
+function extractIntent(prompt) {
+  if (!prompt) return null;
+  const firstBlock = prompt.split(/\n\n+/)[0].replace(/\s+/g, ' ').trim();
+  return firstBlock.length > 300 ? firstBlock.slice(0, 297) + '…' : firstBlock;
 }
 
 export class ControlCenter {
@@ -626,18 +639,36 @@ export class ControlCenter {
         await incrementTasks(project.id);
         try {
           const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
-          
-          await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
-            shouldStop: () => runner.shouldStop,
+          const intent = extractIntent(prompt);
+
+          // 2-hour timeout (in ms)
+          const timeoutMs = 2 * 60 * 60 * 1000;
+          const startTime = Date.now();
+
+          const result = await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
+            shouldStop: () => runner.shouldStop || (Date.now() - startTime > timeoutMs),
             onSessionCreated: async (sessionId) => {
               runner.sessionId = sessionId;
               await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId });
+              await createJournalEntry({ sessionId, assignmentId: assignment.id, projectId: project.id, agentName: agent.name, intent });
             }
           });
-          if (runner.sessionId) await recordAgentSessionEnd(runner.sessionId, 'completed');
+          
+          if (Date.now() - startTime > timeoutMs) throw new Error('Session exceeded 2h timeout');
+
+          if (runner.sessionId) {
+            await recordAgentSessionEnd(runner.sessionId, 'completed');
+            await closeJournalEntry(runner.sessionId, {
+              status: 'completed',
+              summary: result ? 'Session terminée avec succès — PR créée et soumise pour merge.' : 'Session terminée — aucune PR créée.',
+            });
+          }
           await recordAssignmentRun(assignment.id);
         } catch (err) {
-          if (runner.sessionId) await recordAgentSessionEnd(runner.sessionId, 'failed');
+          if (runner.sessionId) {
+            await recordAgentSessionEnd(runner.sessionId, 'failed');
+            await closeJournalEntry(runner.sessionId, { status: 'failed', summary: `Erreur : ${err.message}` });
+          }
           throw err;
         } finally {
           await decrementTasks(project.id);
@@ -677,12 +708,30 @@ export class ControlCenter {
       await incrementTasks(project.id);
       try {
         const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
+        const intent = extractIntent(prompt);
 
-        await startAndMonitorSession(prompt, agent.name, currentProject, { 
+        const result = await startAndMonitorSession(prompt, agent.name, currentProject, {
           shouldStop: () => runner.shouldStop,
-          onSessionCreated: (id) => { runner.sessionId = id; }
+          onSessionCreated: async (id) => {
+            runner.sessionId = id;
+            await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId: id });
+            await createJournalEntry({ sessionId: id, assignmentId: assignment.id, projectId: project.id, agentName: agent.name, intent });
+          }
         });
+        if (runner.sessionId) {
+          await recordAgentSessionEnd(runner.sessionId, 'completed');
+          await closeJournalEntry(runner.sessionId, {
+            status: 'completed',
+            summary: result ? 'Session cron terminée — PR créée.' : 'Session cron terminée — aucune PR.',
+          });
+        }
         await recordAssignmentRun(assignment.id);
+      } catch (err) {
+        if (runner.sessionId) {
+          await recordAgentSessionEnd(runner.sessionId, 'failed');
+          await closeJournalEntry(runner.sessionId, { status: 'failed', summary: `Erreur : ${err.message}` });
+        }
+        throw err;
       } finally {
         await decrementTasks(project.id);
       }
@@ -714,15 +763,31 @@ export class ControlCenter {
 
     runner.promise = (async () => {
       await incrementTasks(project.id);
+      const intent = extractIntent(agent.prompt);
       try {
-        await startAndMonitorSession(agent.prompt, agent.name, project, { 
+        const result = await startAndMonitorSession(agent.prompt, agent.name, project, {
           shouldStop: () => runner.shouldStop,
-          onSessionCreated: (id) => { runner.sessionId = id; }
+          onSessionCreated: async (id) => {
+            runner.sessionId = id;
+            await recordAgentSessionStart({ assignmentId, projectId: project.id, agentName: agent.name, sessionId: id });
+            await createJournalEntry({ sessionId: id, assignmentId, projectId: project.id, agentName: agent.name, intent });
+          }
         });
+        if (runner.sessionId) {
+          await recordAgentSessionEnd(runner.sessionId, 'completed');
+          await closeJournalEntry(runner.sessionId, {
+            status: 'completed',
+            summary: result ? 'Run manuel terminé — PR créée.' : 'Run manuel terminé — aucune PR.',
+          });
+        }
         await recordAssignmentRun(assignmentId);
         runner.iterations = 1;
         this._markRunnerStopped(runner, 'completed');
       } catch (err) {
+        if (runner.sessionId) {
+          await recordAgentSessionEnd(runner.sessionId, 'failed');
+          await closeJournalEntry(runner.sessionId, { status: 'failed', summary: `Erreur : ${err.message}` });
+        }
         this._markRunnerStopped(runner, 'failed', err);
       } finally {
         await decrementTasks(project.id);
@@ -730,6 +795,76 @@ export class ControlCenter {
     })();
 
     return runnerId;
+  }
+
+  // ── Site Check ────────────────────────────────────────────────────────────
+
+  isSiteCheckRunning(projectId) {
+    return this.runners.has(`site-check:${projectId}`);
+  }
+
+  async startSiteCheck(projectId) {
+    const runnerId = `site-check:${projectId}`;
+    if (this.runners.has(runnerId)) return runnerId;
+
+    const config = await getSiteCheckConfig(projectId);
+    if (!config?.enabled) throw new Error(`Site check is disabled for ${projectId}`);
+    if (!config.baseUrl) throw new Error(`site_check_base_url not set for ${projectId}`);
+
+    const project = await this.getProjectRuntime(projectId);
+    if (!project) throw new Error(`Project ${projectId} not found`);
+    project.siteCheckBaseUrl = config.baseUrl;
+
+    const runner = this._createRunner({
+      id: runnerId,
+      projectId,
+      type: 'site-check',
+      mode: 'loop',
+      label: `Site Check — ${projectId} (${config.locale})`,
+      details: { baseUrl: config.baseUrl, pauseMs: config.pauseMs, locale: config.locale },
+    });
+
+    runner.promise = runSiteCheckCycle(project, {
+      shouldStop: () => runner.shouldStop,
+      pauseMs: config.pauseMs,
+      locale: config.locale,
+    }).catch(err => {
+      this.log('error', `[SiteCheck][${projectId}] Runner crashed: ${err.message}`);
+      this._markRunnerStopped(runner, 'failed', err);
+    }).then(() => {
+      if (runner.status === 'running') this._markRunnerStopped(runner, 'completed');
+    });
+
+    this.log('info', `[SiteCheck] Started for ${projectId} → ${config.baseUrl}`);
+    return runnerId;
+  }
+
+  async stopSiteCheck(projectId) {
+    const runner = this.runners.get(`site-check:${projectId}`);
+    if (!runner) return;
+    runner.shouldStop = true;
+    this._markRunnerStopped(runner, 'stopped');
+    this.log('info', `[SiteCheck] Stopped for ${projectId}`);
+  }
+
+  async toggleSiteCheck(projectId, enabled, baseUrl, pauseMs, locale = 'fr') {
+    await updateSiteCheckConfig(projectId, { enabled, baseUrl, pauseMs, locale });
+    if (enabled) {
+      await this.startSiteCheck(projectId);
+    } else {
+      await this.stopSiteCheck(projectId);
+    }
+  }
+
+  async startAllSiteChecks() {
+    const projects = await listAllProjectsConfig();
+    for (const p of projects) {
+      if (p.site_check_enabled && p.site_check_base_url) {
+        try { await this.startSiteCheck(p.id); } catch (err) {
+          this.log('warn', `[SiteCheck] Could not auto-start for ${p.id}: ${err.message}`);
+        }
+      }
+    }
   }
 
   async startAllAssignments() {
