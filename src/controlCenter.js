@@ -425,12 +425,12 @@ export class ControlCenter {
     return runnerId;
   }
 
-  async setProjectLock(projectId, locked) {
+  async setProjectLock(projectId, locked, reason = 'manual') {
     if (!await this.getProjectRuntime(projectId)) {
       throw new Error(`Unknown project: ${projectId}`);
     }
     if (locked) {
-      await lockProject(projectId);
+      await lockProject(projectId, reason);
     } else {
       await unlockProject(projectId);
     }
@@ -782,6 +782,8 @@ export class ControlCenter {
         githubRepo: project.githubRepo,
         githubBranch: project.githubBranch,
         locked: state.is_locked_for_daily,
+        lockedAt: state.lockedAt,
+        lockReason: state.lockReason,
         activeTasks: state.active_tasks,
         openPRCount: stats.openPRCount,
         totalAgentsLaunched

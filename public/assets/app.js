@@ -513,6 +513,14 @@ function renderProjectDetail(data, assignments) {
 
   el.projectDetailContent.innerHTML = '';
 
+  // Pipeline Timeline
+  const timelineHtml = renderPipelineTimeline(project);
+  if (timelineHtml) {
+    const timelineWrapper = document.createElement('div');
+    timelineWrapper.innerHTML = timelineHtml;
+    el.projectDetailContent.appendChild(timelineWrapper);
+  }
+
   // --- Tab bar ---
   const activeTab = getProjectDetailTab(project.id);
   const tabs = [
@@ -2416,3 +2424,45 @@ fetch('/api/status').then(res => {
   if (res.status === 401) window.location.replace('/login');
   else init();
 }).catch(() => init());
+
+function renderPipelineTimeline(project) {
+  if (!project.locked || (project.lockReason !== 'pipeline' && project.lockReason !== 'pipeline-timeout')) {
+    return '';
+  }
+
+  const lockedAt = new Date(project.lockedAt);
+  const elapsedMin = Math.round((Date.now() - (project.lockedAt || Date.now())) / 60000);
+  const isTimeout = project.lockReason === 'pipeline-timeout';
+
+  return `
+    <div class="pipeline-timeline-card">
+      <div class="pipeline-timeline-header">
+        <span class="pipeline-timeline-title">Pipeline in Progress</span>
+        <span class="pipeline-timeline-elapsed">${elapsedMin}m elapsed</span>
+      </div>
+      <div class="pipeline-timeline-body">
+        <div class="pipeline-step is-complete">
+          <div class="step-icon">🔒</div>
+          <div class="step-content">
+            <p class="step-label">Project Locked</p>
+            <p class="step-time">${lockedAt.toLocaleTimeString()}</p>
+          </div>
+        </div>
+        <div class="pipeline-step ${isTimeout ? 'is-warning' : 'is-complete'}">
+          <div class="step-icon">${isTimeout ? '⚠️' : '⏳'}</div>
+          <div class="step-content">
+            <p class="step-label">${isTimeout ? 'Forced Lock (Timeout)' : 'Waiting for tasks'}</p>
+            <p class="step-desc">${isTimeout ? 'Agents were forcibly closed after 1h wait.' : 'Waiting for active agents to finish.'}</p>
+          </div>
+        </div>
+        <div class="pipeline-step is-active">
+          <div class="step-icon">🚀</div>
+          <div class="step-content">
+            <p class="step-label">Stabilization Loop</p>
+            <p class="step-desc">Jules is validating and merging changes...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}

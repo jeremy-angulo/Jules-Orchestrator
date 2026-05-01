@@ -63,13 +63,17 @@ router.get('/:projectId/detail', apiRateLimiter, async (req, res) => {
     const status = await controlCenter.getStatus();
     const sortByTime = (a, b) => (new Date(b.stoppedAt || b.startedAt).getTime()) - (new Date(a.stoppedAt || a.startedAt).getTime());
 
+    const projectState = status.projects.find(p => p.id === projectId) || {};
+
     res.status(200).json({
         projectId,
         project: {
             id: project.id,
             githubRepo: project.githubRepo,
             githubBranch: project.githubBranch,
-            locked: (status.projects.find(p => p.id === projectId) || {}).locked,
+            locked: projectState.locked,
+            lockedAt: projectState.lockedAt,
+            lockReason: projectState.lockReason,
             hasPipeline: !!project.buildAndMergePipeline
         },
         runners: { running: running.sort(sortByTime), completed: completed.sort(sortByTime), failed: failed.sort(sortByTime) },

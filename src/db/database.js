@@ -53,7 +53,9 @@ export async function initTables() {
     `CREATE TABLE IF NOT EXISTS project_states (
       project_id TEXT PRIMARY KEY,
       is_locked_for_daily BOOLEAN DEFAULT 0,
-      active_tasks INTEGER DEFAULT 0
+      active_tasks INTEGER DEFAULT 0,
+      locked_at INTEGER,
+      lock_reason TEXT
     )`,
     `CREATE TABLE IF NOT EXISTS api_calls_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -177,7 +179,9 @@ export async function initTables() {
     "ALTER TABLE agent_sessions ADD COLUMN created_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN ended_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN status TEXT DEFAULT 'running'",
-    "ALTER TABLE token_names ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)"
+    "ALTER TABLE token_names ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)",
+    "ALTER TABLE project_states ADD COLUMN locked_at INTEGER",
+    "ALTER TABLE project_states ADD COLUMN lock_reason TEXT"
   ];
 
   for (const sql of migrations) {
@@ -194,11 +198,11 @@ export async function initTables() {
 export async function initProjectState(projectId) {
   await executeWithRetry({ sql: 'INSERT OR IGNORE INTO project_states (project_id) VALUES (?)', args: [projectId] });
 }
-export async function lockProject(projectId) {
-  await executeWithRetry({ sql: 'UPDATE project_states SET is_locked_for_daily = 1 WHERE project_id = ?', args: [projectId] });
+export async function lockProject(projectId, reason = 'manual') {
+  await executeWithRetry({ sql: 'UPDATE project_states SET is_locked_for_daily = 1, locked_at = ?, lock_reason = ? WHERE project_id = ?', args: [Date.now(), reason, projectId] });
 }
 export async function unlockProject(projectId) {
-  await executeWithRetry({ sql: 'UPDATE project_states SET is_locked_for_daily = 0 WHERE project_id = ?', args: [projectId] });
+  await executeWithRetry({ sql: 'UPDATE project_states SET is_locked_for_daily = 0, locked_at = NULL, lock_reason = NULL WHERE project_id = ?', args: [projectId] });
 }
 export async function incrementTasks(projectId) {
   await executeWithRetry({ sql: 'UPDATE project_states SET active_tasks = active_tasks + 1 WHERE project_id = ?', args: [projectId] });
@@ -219,7 +223,13 @@ export async function getActiveTasks(projectId) {
 }
 export async function getAllProjectStates() {
   const rs = await executeWithRetry('SELECT * FROM project_states');
-  return rs.rows.map(r => ({ projectId: r.project_id, is_locked_for_daily: !!r.is_locked_for_daily, active_tasks: Number(r.active_tasks) }));
+  return rs.rows.map(r => ({ 
+    projectId: r.project_id, 
+    is_locked_for_daily: !!r.is_locked_for_daily, 
+    active_tasks: Number(r.active_tasks),
+    lockedAt: r.locked_at,
+    lockReason: r.lock_reason
+  }));
 }
 
 // API usage

@@ -14,7 +14,7 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
     try {
       log("info", `\n[${project.id} - Pipeline] ⏰ Verrouillage du repo pour la Pipeline...`);
       // 1. Lever le drapeau rouge
-      await lockProject(project.id);
+      await lockProject(project.id, 'pipeline');
       // 2. Attendre que les agents en cours finissent leur travail proprement (timeout 1h)
       let waited = 0;
       const timeout = 3600; // 1 heure en secondes
@@ -29,6 +29,7 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
 
       if (waited >= timeout) {
          log("info", `[${project.id} - Pipeline] ⚠️ Timeout d'une heure atteint, on force l'arrêt des agents restants...`);
+         await lockProject(project.id, 'pipeline-timeout');
          if (typeof options.onTimeout === 'function') {
            await options.onTimeout(project.id);
          }
