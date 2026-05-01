@@ -30,7 +30,12 @@ async function getProjectOrFail(projectId, res) {
 }
 
 router.get('/config', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
-    res.status(200).json({ projects: await listProjectsConfig() });
+    try {
+        const projects = await listProjectsConfig();
+        res.status(200).json({ projects });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 router.post('/config', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
@@ -51,34 +56,38 @@ router.post('/config', apiRateLimiter, requirePermission('projects.add'), async 
 });
 
 router.get('/:projectId/detail', apiRateLimiter, async (req, res) => {
-    const { projectId } = req.params;
-    const project = await controlCenter.getProjectRuntime(projectId);
-    if (!project) return res.status(404).json({ error: `Project ${projectId} not found` });
+    try {
+        const { projectId } = req.params;
+        const project = await controlCenter.getProjectRuntime(projectId);
+        if (!project) return res.status(404).json({ error: `Project ${projectId} not found` });
 
-    const allRunners = controlCenter.listRunners();
-    const projectRunners = allRunners.filter(r => r.projectId === projectId);
-    const running = projectRunners.filter(r => r.status === 'running');
-    const completed = projectRunners.filter(r => r.status === 'stopped' && !r.lastError && r.stoppedAt);
-    const failed = projectRunners.filter(r => r.lastError || (r.status === 'stopped' && r.lastError));
-    const status = await controlCenter.getStatus();
-    const sortByTime = (a, b) => (new Date(b.stoppedAt || b.startedAt).getTime()) - (new Date(a.stoppedAt || a.startedAt).getTime());
+        const allRunners = controlCenter.listRunners();
+        const projectRunners = allRunners.filter(r => r.projectId === projectId);
+        const running = projectRunners.filter(r => r.status === 'running');
+        const completed = projectRunners.filter(r => r.status === 'stopped' && !r.lastError && r.stoppedAt);
+        const failed = projectRunners.filter(r => r.lastError || (r.status === 'stopped' && r.lastError));
+        const status = await controlCenter.getStatus();
+        const sortByTime = (a, b) => (new Date(b.stoppedAt || b.startedAt).getTime()) - (new Date(a.stoppedAt || a.startedAt).getTime());
 
-    const projectState = status.projects.find(p => p.id === projectId) || {};
+        const projectState = status.projects.find(p => p.id === projectId) || {};
 
-    res.status(200).json({
-        projectId,
-        project: {
-            id: project.id,
-            githubRepo: project.githubRepo,
-            githubBranch: project.githubBranch,
-            locked: projectState.locked,
-            lockedAt: projectState.lockedAt,
-            lockReason: projectState.lockReason,
-            hasPipeline: !!project.buildAndMergePipeline
-        },
-        runners: { running: running.sort(sortByTime), completed: completed.sort(sortByTime), failed: failed.sort(sortByTime) },
-        summary: { total: projectRunners.length, runningCount: running.length, completedCount: completed.length, failedCount: failed.length }
-    });
+        res.status(200).json({
+            projectId,
+            project: {
+                id: project.id,
+                githubRepo: project.githubRepo,
+                githubBranch: project.githubBranch,
+                locked: projectState.locked,
+                lockedAt: projectState.lockedAt,
+                lockReason: projectState.lockReason,
+                hasPipeline: !!project.buildAndMergePipeline
+            },
+            runners: { running: running.sort(sortByTime), completed: completed.sort(sortByTime), failed: failed.sort(sortByTime) },
+            summary: { total: projectRunners.length, runningCount: running.length, completedCount: completed.length, failedCount: failed.length }
+        });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 router.post('/add', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {

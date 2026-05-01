@@ -7,9 +7,13 @@ import { listAssignments, getAssignment, createAssignment, updateAssignment, del
 const router = express.Router();
 
 router.get('/', apiRateLimiter, async (req, res) => {
-    const assignments = await listAssignments(req.query.projectId || null);
-    const enriched = assignments.map(a => ({ ...a, running: controlCenter.isAssignmentRunning(a.id) }));
-    res.status(200).json({ assignments: enriched });
+    try {
+        const assignments = await listAssignments(req.query.projectId || null);
+        const enriched = assignments.map(a => ({ ...a, running: controlCenter.isAssignmentRunning(a.id) }));
+        res.status(200).json({ assignments: enriched });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 router.post('/', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
@@ -28,22 +32,26 @@ router.post('/', apiRateLimiter, requirePermission('agents.control'), async (req
 });
 
 router.post('/:id/toggle', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
-    const id = Number(req.params.id);
-    const current = await getAssignment(id);
-    if (!current) return res.status(404).json({ error: 'Assignment not found.' });
-    
-    const newEnabled = !current.enabled;
-    await toggleAssignment(id, newEnabled);
-    const updated = await getAssignment(id);
-    
-    if (newEnabled) {
-        try { await controlCenter.startAssignment(id); } catch (_) {}
-    } else {
-        await controlCenter.stopAssignment(id);
+    try {
+        const id = Number(req.params.id);
+        const current = await getAssignment(id);
+        if (!current) return res.status(404).json({ error: 'Assignment not found.' });
+        
+        const newEnabled = !current.enabled;
+        await toggleAssignment(id, newEnabled);
+        const updated = await getAssignment(id);
+        
+        if (newEnabled) {
+            try { await controlCenter.startAssignment(id); } catch (_) {}
+        } else {
+            await controlCenter.stopAssignment(id);
+        }
+        
+        await audit(req, 'assignment.toggle', String(id), { enabled: newEnabled });
+        res.status(200).json({ ok: true, assignment: { ...updated, running: controlCenter.isAssignmentRunning(id) } });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
     }
-    
-    await audit(req, 'assignment.toggle', String(id), { enabled: newEnabled });
-    res.status(200).json({ ok: true, assignment: { ...updated, running: controlCenter.isAssignmentRunning(id) } });
 });
 
 router.post('/:id/run', apiRateLimiter, requirePermission('background.runOnce'), async (req, res) => {
@@ -102,11 +110,15 @@ router.put('/:id', apiRateLimiter, requirePermission('agents.control'), async (r
 });
 
 router.delete('/:id', apiRateLimiter, requirePermission('agents.control'), requireCriticalConfirmation, async (req, res) => {
-    const id = Number(req.params.id);
-    await controlCenter.stopAssignment(id);
-    await deleteAssignment(id);
-    await audit(req, 'assignment.delete', String(id));
-    res.status(200).json({ ok: true });
+    try {
+        const id = Number(req.params.id);
+        await controlCenter.stopAssignment(id);
+        await deleteAssignment(id);
+        await audit(req, 'assignment.delete', String(id));
+        res.status(200).json({ ok: true });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 export default router;

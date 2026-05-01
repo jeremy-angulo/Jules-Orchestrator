@@ -7,7 +7,12 @@ import { listAgents, getAgent, createAgent, updateAgent, deleteAgent, reorderAge
 const router = express.Router();
 
 router.get('/', apiRateLimiter, async (req, res) => {
-    res.status(200).json({ agents: await listAgents() });
+    try {
+        const agents = await listAgents();
+        res.status(200).json({ agents });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 router.post('/', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {

@@ -43,7 +43,7 @@ export const rateLimiter = (req, res, next) => {
     const ip = req.ip || req.get('x-forwarded-for') || req.connection.remoteAddress;
     const now = Date.now();
     const windowMs = 60 * 1000;
-    const limit = 60;
+    const limit = 120; // Increased from 60
 
     if (!rateLimitMap.has(ip)) {
         rateLimitMap.set(ip, { count: 1, firstRequest: now });
@@ -68,7 +68,7 @@ export const apiRateLimiter = (req, res, next) => {
     const ip = req.ip || req.get('x-forwarded-for') || req.connection.remoteAddress;
     const now = Date.now();
     const windowMs = 60 * 1000;
-    const limit = 80;
+    const limit = 250; // Increased from 80
 
     if (!apiRateLimitMap.has(ip)) {
         apiRateLimitMap.set(ip, { count: 1, firstRequest: now });

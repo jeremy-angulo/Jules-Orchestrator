@@ -1,6 +1,7 @@
 import { createClient } from '@libsql/client';
 
-const url = process.env.TURSO_DATABASE_URL || 'file:orchestrator.db';
+const dbPath = process.env.ORCHESTRATOR_DB_PATH || 'orchestrator.db';
+const url = process.env.TURSO_DATABASE_URL || `file:${dbPath}`;
 const authToken = process.env.TURSO_AUTH_TOKEN;
 
 const client = createClient({

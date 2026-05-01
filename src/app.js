@@ -59,4 +59,14 @@ app.use('/auth', authRoutes);
 // Group all /api routes behind auth (which now has user info from attachDashboardUser)
 app.use('/api', requireDashboardAuth, apiRouter);
 
+// Global Error Handler
+app.use((err, req, res, next) => {
+    console.error(`[GlobalError] ${req.method} ${req.url}:`, err);
+    const isApi = req.url.startsWith('/api/') || req.url === '/api' || req.url.startsWith('/auth/');
+    if (isApi) {
+        return res.status(500).json({ error: 'Internal Server Error', message: String(err.message) });
+    }
+    res.status(500).send('Internal Server Error');
+});
+
 export default app;

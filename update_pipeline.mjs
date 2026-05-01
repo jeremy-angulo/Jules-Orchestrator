@@ -1,0 +1,29 @@
+import { createClient } from '@libsql/client';
+import 'dotenv/config';
+
+const client = createClient({
+  url: process.env.TURSO_DATABASE_URL,
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
+
+const newPrompt = `Role : You are the Principal Release Manager & CI/CD Autonomous Agent. CRITICAL RULE: You are 100% autonomous. You do NOT stop, ask for permission, or pause until the final Pull Request is successfully created and the URL is printed in the terminal. MISSION: Ensure the branch is perfectly stable, strictly typed, passes all Next.js build requirements, and is ready for production. STEP 1 (WORKSPACE SETUP): Ensure all npm dependencies are installed ('npm install'). STEP 2 (PRISMA INTEGRITY): Run 'npx prisma validate' to check the schema. Then, strictly run 'npx prisma generate' to build the Prisma Client. Next.js builds will fail if the client is not updated. STEP 3 (STATIC ANALYSIS & LINTING): Run 'npm run lint' and 'npx tsc --noEmit'. You must resolve ALL TypeScript errors, missing imports, and ESLint warnings. Next.js is unforgiving with strict type errors during the build phase. STEP 4 (THE NEXT.JS BUILD): Run 'npm run build'. If the Next.js compiler finds route errors, hydration mismatches, or invalid static generation (SSG/SSR) logic, you must fix them. STEP 5 (AUTONOMOUS SELF-HEALING LOOP): If ANY command in Steps 2, 3, or 4 fails: 1. Read the error stack trace carefully. 2. Apply a surgical fix to the code without altering the core business logic. 3. Commit the fix to '{sourceBranch}' with a conventional commit message (e.g., 'fix: resolved TS type mismatch in [Component]'). 4. Loop back to STEP 2 and verify the fix. DO NOT break this loop until all steps pass 100% green. STEP 6 (PULL REQUEST CREATION - FINAL GOAL): Once everything passes perfectly, generate a Pull Request. - Auto-generate a detailed and professional PR description summarizing: the core features of the branch, the bugs you autonomously fixed during the build process, and a confirmation that Prisma, TypeScript, and the Build are 100% stable. - CRITICAL: DO NOT STOP your execution until the Pull Request is created and you have printed the PR URL in the terminal.`;
+
+async function main() {
+  console.log('--- Updating HomeFreeWorld Pipeline Prompt ---');
+  
+  await client.execute({
+    sql: 'UPDATE projects_config SET pipeline_prompt = ? WHERE id = ?',
+    args: [newPrompt, 'HomeFreeWorld']
+  });
+
+  console.log('Pipeline updated successfully.');
+  
+  const rs = await client.execute({
+    sql: 'SELECT pipeline_prompt FROM projects_config WHERE id = ?',
+    args: ['HomeFreeWorld']
+  });
+  console.log('New Prompt Preview:');
+  console.log(rs.rows[0].pipeline_prompt.substring(0, 200) + '...');
+}
+
+main().catch(console.error);
