@@ -1,4 +1,5 @@
 import { GLOBAL_CONFIG } from '../src/config.js';
+process.env.ORCHESTRATOR_DB_PATH = 'test-agents.db';
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 import test from 'node:test';
@@ -7,7 +8,8 @@ import cron from 'node-cron';
 import { scheduleBuildAndMergePipeline } from '../src/agents/pipeline.js';
 import * as db from '../src/db/database.js';
 
-test('scheduleBuildAndMergePipeline - handles errors gracefully', (t) => {
+test('scheduleBuildAndMergePipeline - handles errors gracefully', async (t) => {
+  await db.initTables();
   // Mock cron.schedule to prevent the process from hanging
   const tasks = [];
   t.mock.method(cron, 'schedule', (pattern, callback) => {

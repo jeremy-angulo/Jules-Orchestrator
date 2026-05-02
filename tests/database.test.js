@@ -1,14 +1,17 @@
 import { GLOBAL_CONFIG } from '../src/config.js';
+process.env.ORCHESTRATOR_DB_PATH = 'test-db.db';
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 import test from 'node:test';
 import assert from 'node:assert';
 import {
+  initTables,
   initProjectState, lockProject, unlockProject,
   incrementTasks, decrementTasks, isProjectLocked, getActiveTasks
 } from '../src/db/database.js';
 
 test('Database operations', async () => {
+  await initTables();
   const projectId = 'test-db-project';
 
   // init

@@ -45,7 +45,7 @@ function invalidateAssignmentCache(projectId) {
   assignmentListCache.delete('all');
 }
 
-async function executeWithRetry(stmt, retries = 5, delay = 500) {
+async function executeWithRetry(stmt, retries = 10, delay = 1000) {
   const normalizedStmt = typeof stmt === 'string' ? stmt : {
     ...stmt,
     args: stmt.args ? stmt.args.map(a => a === undefined ? null : a) : []
@@ -63,7 +63,7 @@ async function executeWithRetry(stmt, retries = 5, delay = 500) {
   }
 }
 
-async function batchWithRetry(stmts, mode, retries = 5, delay = 500) {
+async function batchWithRetry(stmts, mode, retries = 10, delay = 1000) {
   const normalizedStmts = stmts.map(stmt => {
     if (typeof stmt === 'string') return stmt;
     return {
@@ -209,17 +209,18 @@ export async function initTables() {
     "ALTER TABLE agent_sessions ADD COLUMN status TEXT DEFAULT 'running'",
     "ALTER TABLE agent_sessions ADD COLUMN token_index INTEGER",
     "ALTER TABLE assignments ADD COLUMN concurrency INTEGER DEFAULT 1",
+    "ALTER TABLE assignments ADD COLUMN wait_for_pr_merge INTEGER DEFAULT 0",
     "ALTER TABLE token_names ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)",
     "ALTER TABLE project_states ADD COLUMN locked_at INTEGER",
     "ALTER TABLE project_states ADD COLUMN lock_reason TEXT",
-    // Site Check feature
-    "ALTER TABLE projects_config ADD COLUMN site_check_enabled BOOLEAN NOT NULL DEFAULT 0",
-    "ALTER TABLE projects_config ADD COLUMN site_check_base_url TEXT",
-    "ALTER TABLE projects_config ADD COLUMN site_check_pause_ms INTEGER NOT NULL DEFAULT 5000",
-    "ALTER TABLE projects_config ADD COLUMN site_check_locale TEXT NOT NULL DEFAULT 'fr'",
     "ALTER TABLE site_pages ADD COLUMN screenshot_path TEXT",
     "ALTER TABLE site_pages ADD COLUMN issues JSON",
-    // Indexes — fix 412M row reads from full-table scans
+    "ALTER TABLE site_pages ADD COLUMN requires_auth BOOLEAN DEFAULT 0",
+    "ALTER TABLE site_pages ADD COLUMN requires_admin BOOLEAN DEFAULT 0",
+    "ALTER TABLE site_pages ADD COLUMN is_wizard BOOLEAN DEFAULT 0",
+    "ALTER TABLE prompts ADD COLUMN prompt_name TEXT",
+    "ALTER TABLE token_names ADD COLUMN id INTEGER",
+    "ALTER TABLE agent_sessions ADD COLUMN id INTEGER",
     "CREATE INDEX IF NOT EXISTS idx_agent_sessions_project   ON agent_sessions(project_id, started_at)",
     "CREATE INDEX IF NOT EXISTS idx_journal_project          ON journal(project_id, started_at)",
     "CREATE INDEX IF NOT EXISTS idx_journal_assignment       ON journal(assignment_id, started_at)",
@@ -229,12 +230,13 @@ export async function initTables() {
     "CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp      ON audit_log(timestamp)"
   ];
 
+  // Run migrations individually but wrapped in try/catch to ignore "column already exists"
+  // Note: PRAGMA user_version could be used for cleaner migrations but this is the current pattern.
   for (const sql of migrations) {
     try {
       await client.execute(sql);
-      console.log(`[Database] Migration success: ${sql}`);
     } catch (e) {
-      // Ignore errors (like column already exists)
+      // Ignore errors like "duplicate column name" or "table already exists"
     }
   }
 }

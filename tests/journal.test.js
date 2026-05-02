@@ -1,4 +1,5 @@
 import { GLOBAL_CONFIG } from '../src/config.js';
+process.env.ORCHESTRATOR_DB_PATH = 'test-journal.db';
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 

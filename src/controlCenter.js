@@ -536,16 +536,24 @@ export class ControlCenter {
     }
 
     if (!this.statsInterval) {
-      const recordMetrics = () => {
-        const status = this.getStatus();
-        pruneOldData; // already scheduled separately
-        Promise.all([
-          recordDashboardMetric('active_runners', status.runners.length),
-          recordDashboardMetric('active_tasks', status.projects.reduce((s, p) => s + p.activeTasks, 0)),
-          recordDashboardMetric('locked_projects', status.projects.filter(p => p.locked).length),
-        ]).catch(() => {});
-        for (const project of this.projects) {
-          this.updateProjectStats(project.id).catch(() => {});
+      const recordMetrics = async () => {
+        try {
+          const status = await this.getStatus();
+          if (!status) {
+            this.log('error', '[ControlCenter] getStatus() returned null/undefined');
+            return;
+          }
+          pruneOldData; // already scheduled separately
+          await Promise.all([
+            recordDashboardMetric('active_runners', (status.runners || []).length),
+            recordDashboardMetric('active_tasks', (status.projects || []).reduce((s, p) => s + (p.activeTasks || 0), 0)),
+            recordDashboardMetric('locked_projects', (status.projects || []).filter(p => p.locked).length),
+          ]);
+          for (const project of this.projects) {
+            this.updateProjectStats(project.id).catch(() => {});
+          }
+        } catch (err) {
+          this.log('error', `[ControlCenter] recordMetrics failed: ${err.message}`, { stack: err.stack });
         }
       };
       recordMetrics();
