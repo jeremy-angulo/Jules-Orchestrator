@@ -13,6 +13,23 @@ const client = createClient({
   authToken,
 });
 
+// Cache for Site Check to minimize DB reads
+const siteCheckStatsCache = new Map(); // projectId -> { stats, ts }
+const siteCheckPagesCache = new Map(); // projectId -> { pages, ts }
+const projectStateCache = new Map(); // projectId -> state
+const CACHE_TTL_SITE_CHECK = 60_000; // 1 minute
+
+function invalidateSiteCheckCache(projectId) {
+  if (projectId) {
+    siteCheckStatsCache.delete(projectId);
+    siteCheckPagesCache.delete(projectId);
+  }
+}
+
+function invalidateProjectStateCache(projectId) {
+  if (projectId) projectStateCache.delete(projectId);
+}
+
 async function executeWithRetry(stmt, retries = 5, delay = 500) {
   const normalizedStmt = typeof stmt === 'string' ? stmt : {
     ...stmt,
@@ -230,39 +247,59 @@ export async function pruneOldData(daysToKeep = 7) {
 // Basic CRUD
 export async function initProjectState(projectId) {
   await executeWithRetry({ sql: 'INSERT OR IGNORE INTO project_states (project_id) VALUES (?)', args: [projectId] });
+  invalidateProjectStateCache(projectId);
 }
 export async function lockProject(projectId, reason = 'manual') {
   await executeWithRetry({ sql: 'UPDATE project_states SET is_locked_for_daily = 1, locked_at = ?, lock_reason = ? WHERE project_id = ?', args: [Date.now(), reason, projectId] });
+  invalidateProjectStateCache(projectId);
 }
 export async function unlockProject(projectId) {
   await executeWithRetry({ sql: 'UPDATE project_states SET is_locked_for_daily = 0, locked_at = NULL, lock_reason = NULL WHERE project_id = ?', args: [projectId] });
+  invalidateProjectStateCache(projectId);
 }
 export async function incrementTasks(projectId) {
   await executeWithRetry({ sql: 'UPDATE project_states SET active_tasks = active_tasks + 1 WHERE project_id = ?', args: [projectId] });
+  invalidateProjectStateCache(projectId);
 }
 export async function decrementTasks(projectId) {
   await executeWithRetry({ sql: 'UPDATE project_states SET active_tasks = MAX(0, active_tasks - 1) WHERE project_id = ?', args: [projectId] });
+  invalidateProjectStateCache(projectId);
 }
 export async function setActiveTasks(projectId, taskCount) {
   await executeWithRetry({ sql: 'UPDATE project_states SET active_tasks = ? WHERE project_id = ?', args: [taskCount, projectId] });
+  invalidateProjectStateCache(projectId);
 }
 export async function isProjectLocked(projectId) {
-  const rs = await executeWithRetry({ sql: 'SELECT is_locked_for_daily FROM project_states WHERE project_id = ?', args: [projectId] });
-  return rs.rows[0]?.is_locked_for_daily === 1;
+  const cached = projectStateCache.get(projectId);
+  if (cached) return cached.is_locked_for_daily === 1;
+
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM project_states WHERE project_id = ?', args: [projectId] });
+  const row = rs.rows[0];
+  if (row) projectStateCache.set(projectId, row);
+  return row?.is_locked_for_daily === 1;
 }
 export async function getActiveTasks(projectId) {
-  const rs = await executeWithRetry({ sql: 'SELECT active_tasks FROM project_states WHERE project_id = ?', args: [projectId] });
-  return Number(rs.rows[0]?.active_tasks || 0);
+  const cached = projectStateCache.get(projectId);
+  if (cached) return Number(cached.active_tasks || 0);
+
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM project_states WHERE project_id = ?', args: [projectId] });
+  const row = rs.rows[0];
+  if (row) projectStateCache.set(projectId, row);
+  return Number(row?.active_tasks || 0);
 }
 export async function getAllProjectStates() {
   const rs = await executeWithRetry('SELECT * FROM project_states');
-  return rs.rows.map(r => ({ 
-    projectId: r.project_id, 
-    is_locked_for_daily: !!r.is_locked_for_daily, 
-    active_tasks: Number(r.active_tasks),
-    lockedAt: r.locked_at,
-    lockReason: r.lock_reason
-  }));
+  const states = rs.rows.map(r => {
+    projectStateCache.set(r.project_id, r);
+    return { 
+      projectId: r.project_id, 
+      is_locked_for_daily: !!r.is_locked_for_daily, 
+      active_tasks: Number(r.active_tasks),
+      lockedAt: r.locked_at,
+      lockReason: r.lock_reason
+    };
+  });
+  return states;
 }
 
 // Audit
@@ -373,32 +410,36 @@ export async function pickAndLockSitePage(projectId, agentId) {
   });
   const row = rs.rows[0];
   if (!row) return null;
+  invalidateSiteCheckCache(projectId);
   return { ...row, issues: row.issues ? JSON.parse(row.issues) : null };
 }
 
 // Kept for external callers; internally prefer pickAndLockSitePage.
 export async function lockSitePage(pageId, agentId) {
-  await executeWithRetry({
-    sql: `UPDATE site_pages SET locked_by = ?, locked_at = datetime('now') WHERE id = ? AND locked_by IS NULL`,
+  const rs = await executeWithRetry({
+    sql: `UPDATE site_pages SET locked_by = ?, locked_at = datetime('now') WHERE id = ? AND locked_by IS NULL RETURNING project_id`,
     args: [agentId, pageId],
   });
+  invalidateSiteCheckCache(rs.rows[0]?.project_id);
 }
 
 export async function unlockSitePage(pageId) {
-  await executeWithRetry({
-    sql: `UPDATE site_pages SET locked_by = NULL, locked_at = NULL WHERE id = ?`,
+  const rs = await executeWithRetry({
+    sql: `UPDATE site_pages SET locked_by = NULL, locked_at = NULL WHERE id = ? RETURNING project_id`,
     args: [pageId],
   });
+  invalidateSiteCheckCache(rs.rows[0]?.project_id);
 }
 
 export async function updateSitePageResult(pageId, { status, screenshotPath, issues }) {
   const now = new Date().toISOString();
-  await executeWithRetry({
+  const rs = await executeWithRetry({
     sql: `UPDATE site_pages
           SET status = ?, screenshot_path = ?, issues = ?,
               last_screenshot_at = ?, last_analysis_at = ?,
               locked_by = NULL, locked_at = NULL
-          WHERE id = ?`,
+          WHERE id = ?
+          RETURNING project_id`,
     args: [
       status,
       screenshotPath ?? null,
@@ -407,16 +448,24 @@ export async function updateSitePageResult(pageId, { status, screenshotPath, iss
       pageId,
     ],
   });
+  invalidateSiteCheckCache(rs.rows[0]?.project_id);
 }
 
 export async function markSitePageFixed(pageId) {
-  await executeWithRetry({
-    sql: `UPDATE site_pages SET status = 'OK', last_correction_at = datetime('now') WHERE id = ?`,
+  const rs = await executeWithRetry({
+    sql: `UPDATE site_pages SET status = 'OK', last_correction_at = datetime('now') WHERE id = ? RETURNING project_id`,
     args: [pageId],
   });
+  invalidateSiteCheckCache(rs.rows[0]?.project_id);
 }
 
 export async function getSiteCheckStats(projectId) {
+  const now = Date.now();
+  const cached = siteCheckStatsCache.get(projectId);
+  if (cached && (now - cached.ts) < CACHE_TTL_SITE_CHECK) {
+    return cached.stats;
+  }
+
   const rs = await executeWithRetry({
     sql: `SELECT
             COUNT(*) as total,
@@ -428,27 +477,38 @@ export async function getSiteCheckStats(projectId) {
     args: [projectId],
   });
   const row = rs.rows[0];
-  return {
+  const stats = {
     total: Number(row?.total || 0),
     ok: Number(row?.ok || 0),
     fix: Number(row?.fix || 0),
     analyze: Number(row?.analyze || 0),
     neverAnalyzed: Number(row?.never_analyzed || 0),
   };
+  siteCheckStatsCache.set(projectId, { stats, ts: now });
+  return stats;
 }
 
 export async function listSitePages(projectId, { status, group, limit = 100, offset = 0 } = {}) {
-  const conditions = ['project_id = ?'];
-  const args = [projectId];
-  if (status) { conditions.push('status = ?'); args.push(status); }
-  if (group) { conditions.push('group_name = ?'); args.push(group); }
-  args.push(limit, offset);
-  const rs = await executeWithRetry({
-    sql: `SELECT * FROM site_pages WHERE ${conditions.join(' AND ')}
-          ORDER BY last_screenshot_at ASC NULLS FIRST, priority ASC LIMIT ? OFFSET ?`,
-    args,
-  });
-  return rs.rows.map(r => ({ ...r, issues: r.issues ? JSON.parse(r.issues) : null }));
+  const now = Date.now();
+  let pages;
+  const cached = siteCheckPagesCache.get(projectId);
+  if (cached && (now - cached.ts) < CACHE_TTL_SITE_CHECK) {
+    pages = cached.pages;
+  } else {
+    const rs = await executeWithRetry({
+      sql: `SELECT * FROM site_pages WHERE project_id = ?
+            ORDER BY last_screenshot_at ASC NULLS FIRST, priority ASC`,
+      args: [projectId],
+    });
+    pages = rs.rows.map(r => ({ ...r, issues: r.issues ? JSON.parse(r.issues) : null }));
+    siteCheckPagesCache.set(projectId, { pages, ts: now });
+  }
+
+  let filtered = pages;
+  if (status) filtered = filtered.filter(p => p.status === status);
+  if (group) filtered = filtered.filter(p => p.group_name === group);
+
+  return filtered.slice(offset, offset + limit);
 }
 
 export async function releaseStaleSitePageLocks(maxAgeMinutes = 30) {
@@ -457,6 +517,8 @@ export async function releaseStaleSitePageLocks(maxAgeMinutes = 30) {
           WHERE locked_at < datetime('now', ? || ' minutes')`,
     args: [`-${maxAgeMinutes}`],
   });
+  siteCheckStatsCache.clear();
+  siteCheckPagesCache.clear();
 }
 
 // Agents

@@ -10,7 +10,7 @@ export const GLOBAL_CONFIG = {
   JULES_MAIN_TOKEN: process.env.JULES_MAIN_TOKEN,
   JULES_SECONDARY_TOKENS: process.env.JULES_SECONDARY_TOKENS ? process.env.JULES_SECONDARY_TOKENS.split(',').map(t => t.trim()) : [],
   JULES_TOKEN_EMAILS: process.env.JULES_TOKEN_EMAILS ? process.env.JULES_TOKEN_EMAILS.split(',').map(t => t.trim()) : [],
-  POLLING_INTERVAL: process.env.NODE_ENV === 'production' ? 30000 : 15000, // 30s in prod, 15s in dev
+  POLLING_INTERVAL: process.env.NODE_ENV === 'production' ? 60000 : 15000, // 60s in prod, 15s in dev
 };
 
 // Configuration de tes Repositories

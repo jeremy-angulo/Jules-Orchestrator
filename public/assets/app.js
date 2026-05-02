@@ -832,8 +832,9 @@ async function renderSiteCheckTab(container, project) {
 
       <div class="form-group" style="display:grid;grid-template-columns:1fr 120px 180px 140px;gap:12px;align-items:end;margin-bottom:1rem">
         <div>
-          <label class="form-label">Site Base URL</label>
+          <label class="form-label">URL Canonique (Référence)</label>
           <input id="scBaseUrl" type="url" class="form-control" placeholder="https://yoursite.com" value="${escapeHtml(config.baseUrl || '')}" />
+          <p class="muted x-small" style="margin-top:4px">L'agent Jules lancera le projet en local pour effectuer les tests visuels et techniques.</p>
         </div>
         <div>
           <label class="form-label">Locale analysée</label>
