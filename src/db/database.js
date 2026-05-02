@@ -13,11 +13,13 @@ const client = createClient({
   authToken,
 });
 
-// Cache for Site Check to minimize DB reads
-const siteCheckStatsCache = new Map(); // projectId -> { stats, ts }
-const siteCheckPagesCache = new Map(); // projectId -> { pages, ts }
+// Caches to minimize DB reads (indefinite since we are the sole writer)
+const siteCheckStatsCache = new Map(); // projectId -> stats
+const siteCheckPagesCache = new Map(); // projectId -> pages
 const projectStateCache = new Map(); // projectId -> state
-const CACHE_TTL_SITE_CHECK = 60_000; // 1 minute
+const projectConfigCache = new Map(); // projectId -> config
+const agentListCache = { data: null };
+const assignmentListCache = new Map(); // projectId (or 'all') -> assignments
 
 function invalidateSiteCheckCache(projectId) {
   if (projectId) {
@@ -28,6 +30,19 @@ function invalidateSiteCheckCache(projectId) {
 
 function invalidateProjectStateCache(projectId) {
   if (projectId) projectStateCache.delete(projectId);
+}
+
+function invalidateProjectConfigCache(projectId) {
+  if (projectId) projectConfigCache.delete(projectId);
+}
+
+function invalidateAgentCache() {
+  agentListCache.data = null;
+}
+
+function invalidateAssignmentCache(projectId) {
+  if (projectId) assignmentListCache.delete(projectId);
+  assignmentListCache.delete('all');
 }
 
 async function executeWithRetry(stmt, retries = 5, delay = 500) {
@@ -460,11 +475,8 @@ export async function markSitePageFixed(pageId) {
 }
 
 export async function getSiteCheckStats(projectId) {
-  const now = Date.now();
   const cached = siteCheckStatsCache.get(projectId);
-  if (cached && (now - cached.ts) < CACHE_TTL_SITE_CHECK) {
-    return cached.stats;
-  }
+  if (cached) return cached;
 
   const rs = await executeWithRetry({
     sql: `SELECT
@@ -484,16 +496,15 @@ export async function getSiteCheckStats(projectId) {
     analyze: Number(row?.analyze || 0),
     neverAnalyzed: Number(row?.never_analyzed || 0),
   };
-  siteCheckStatsCache.set(projectId, { stats, ts: now });
+  siteCheckStatsCache.set(projectId, stats);
   return stats;
 }
 
 export async function listSitePages(projectId, { status, group, limit = 100, offset = 0 } = {}) {
-  const now = Date.now();
   let pages;
   const cached = siteCheckPagesCache.get(projectId);
-  if (cached && (now - cached.ts) < CACHE_TTL_SITE_CHECK) {
-    pages = cached.pages;
+  if (cached) {
+    pages = cached;
   } else {
     const rs = await executeWithRetry({
       sql: `SELECT * FROM site_pages WHERE project_id = ?
@@ -501,7 +512,7 @@ export async function listSitePages(projectId, { status, group, limit = 100, off
       args: [projectId],
     });
     pages = rs.rows.map(r => ({ ...r, issues: r.issues ? JSON.parse(r.issues) : null }));
-    siteCheckPagesCache.set(projectId, { pages, ts: now });
+    siteCheckPagesCache.set(projectId, pages);
   }
 
   let filtered = pages;
@@ -523,12 +534,14 @@ export async function releaseStaleSitePageLocks(maxAgeMinutes = 30) {
 
 // Agents
 export async function listAgents() {
+  if (agentListCache.data) return agentListCache.data;
   const rs = await executeWithRetry('SELECT * FROM agents ORDER BY sort_order ASC, name ASC');
+  agentListCache.data = rs.rows;
   return rs.rows;
 }
 export async function getAgent(id) {
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM agents WHERE id = ?', args: [id] });
-  return rs.rows[0];
+  const agents = await listAgents();
+  return agents.find(a => String(a.id) === String(id));
 }
 export async function createAgent(a) {
   let rs;
@@ -537,18 +550,22 @@ export async function createAgent(a) {
   } else {
     rs = await executeWithRetry({ sql: 'INSERT INTO agents (name, description, prompt, color, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [a.name, a.description, a.prompt, a.color, a.sort_order || 0, Date.now(), Date.now()] });
   }
+  invalidateAgentCache();
   return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : (a.id || null);
 }
 export async function updateAgent(id, a) {
   await executeWithRetry({ sql: 'UPDATE agents SET name=?, description=?, prompt=?, color=?, updated_at=? WHERE id=?', args: [a.name, a.description, a.prompt, a.color, Date.now(), id] });
+  invalidateAgentCache();
 }
 export async function deleteAgent(id) {
   await executeWithRetry({ sql: 'DELETE FROM agents WHERE id = ?', args: [id] });
+  invalidateAgentCache();
 }
 export async function reorderAgents(ids) {
   for (let i = 0; i < ids.length; i++) {
     await executeWithRetry({ sql: 'UPDATE agents SET sort_order = ? WHERE id = ?', args: [i, ids[i]] });
   }
+  invalidateAgentCache();
 }
 
 // Projects
@@ -557,18 +574,25 @@ export async function listProjectsConfig() {
   return rs.rows;
 }
 export async function getProjectConfig(id) {
+  if (projectConfigCache.has(id)) return projectConfigCache.get(id);
   const rs = await executeWithRetry({ sql: 'SELECT * FROM projects_config WHERE id = ?', args: [id] });
+  if (rs.rows[0]) projectConfigCache.set(id, rs.rows[0]);
   return rs.rows[0];
 }
 export async function upsertProjectConfig(p) {
   await executeWithRetry({ sql: 'INSERT INTO projects_config (id, github_repo, github_branch, github_token, pipeline_cron, pipeline_source_branch, pipeline_target_branch, pipeline_prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET github_repo=excluded.github_repo, github_branch=excluded.github_branch, updated_at=excluded.updated_at', args: [p.id, p.github_repo, p.github_branch || 'main', p.github_token, p.pipeline_cron, p.pipeline_source_branch, p.pipeline_target_branch, p.pipeline_prompt, Date.now(), Date.now()] });
+  invalidateProjectConfigCache(p.id);
 }
 export async function deleteProjectConfig(id) {
   await executeWithRetry({ sql: 'DELETE FROM projects_config WHERE id = ?', args: [id] });
+  invalidateProjectConfigCache(id);
 }
 
 // Assignments
 export async function listAssignments(pid = null) {
+  const cacheKey = pid || 'all';
+  if (assignmentListCache.has(cacheKey)) return assignmentListCache.get(cacheKey);
+
   const sql = `
     SELECT a.*, ag.name as agent_name, ag.color as agent_color 
     FROM assignments a 
@@ -578,6 +602,7 @@ export async function listAssignments(pid = null) {
   `;
   const q = pid ? { sql, args: [pid] } : { sql, args: [] };
   const rs = await executeWithRetry(q);
+  assignmentListCache.set(cacheKey, rs.rows);
   return rs.rows;
 }
 export async function getAssignment(id) {
@@ -594,35 +619,46 @@ export async function getAssignment(id) {
 }
 export async function createAssignment(a) {
   const rs = await executeWithRetry({ sql: 'INSERT INTO assignments (project_id, agent_id, mode, loop_pause_ms, cron_schedule, enabled, concurrency, created_at, updated_at, custom_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [a.project_id, a.agent_id, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled !== undefined ? (a.enabled ? 1 : 0) : 1, a.concurrency || 1, Date.now(), Date.now(), a.custom_prompt] });
+  invalidateAssignmentCache(a.project_id);
   return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : null;
 }
 export async function updateAssignment(id, a) {
-  await executeWithRetry({ sql: 'UPDATE assignments SET agent_id=?, custom_prompt=?, mode=?, loop_pause_ms=?, cron_schedule=?, enabled=?, concurrency=?, updated_at=? WHERE id=?', args: [a.agent_id, a.custom_prompt, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled ? 1 : 0, a.concurrency || 1, Date.now(), id] });
+  const rs = await executeWithRetry({ sql: 'UPDATE assignments SET agent_id=?, custom_prompt=?, mode=?, loop_pause_ms=?, cron_schedule=?, enabled=?, concurrency=?, updated_at=? WHERE id=? RETURNING project_id', args: [a.agent_id, a.custom_prompt, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled ? 1 : 0, a.concurrency || 1, Date.now(), id] });
+  invalidateAssignmentCache(rs.rows[0]?.project_id);
 }
 export async function deleteAssignment(id) {
-  await executeWithRetry({ sql: 'DELETE FROM assignments WHERE id = ?', args: [id] });
+  const rs = await executeWithRetry({ sql: 'DELETE FROM assignments WHERE id = ? RETURNING project_id', args: [id] });
+  invalidateAssignmentCache(rs.rows[0]?.project_id);
 }
 export async function deleteAssignmentsByProject(pid) {
   await executeWithRetry({ sql: 'DELETE FROM assignments WHERE project_id = ?', args: [pid] });
+  invalidateAssignmentCache(pid);
 }
 export async function toggleAssignment(id, enabled) {
-  await executeWithRetry({ sql: 'UPDATE assignments SET enabled = ?, updated_at = ? WHERE id = ?', args: [enabled ? 1 : 0, Date.now(), id] });
+  const rs = await executeWithRetry({ sql: 'UPDATE assignments SET enabled = ?, updated_at = ? WHERE id = ? RETURNING project_id', args: [enabled ? 1 : 0, Date.now(), id] });
+  invalidateAssignmentCache(rs.rows[0]?.project_id);
 }
 export async function recordAssignmentRun(id) {
-  await executeWithRetry({ sql: 'UPDATE assignments SET last_run_at = ?, total_runs = total_runs + 1 WHERE id = ?', args: [Date.now(), id] });
+  const rs = await executeWithRetry({ sql: 'UPDATE assignments SET last_run_at = ?, total_runs = total_runs + 1 WHERE id = ? RETURNING project_id', args: [Date.now(), id] });
+  invalidateAssignmentCache(rs.rows[0]?.project_id);
 }
 
 // Prompts
+const projectPromptsCache = new Map(); // projectId -> prompts[]
+
 export async function listPromptsByProject(pid) {
+  if (projectPromptsCache.has(pid)) return projectPromptsCache.get(pid);
   const rs = await executeWithRetry({ sql: 'SELECT * FROM prompts WHERE project_id = ?', args: [pid] });
+  projectPromptsCache.set(pid, rs.rows);
   return rs.rows;
 }
 export async function getPrompt(pid, name) {
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM prompts WHERE project_id = ? AND name = ?', args: [pid, name] });
-  return rs.rows[0];
+  const prompts = await listPromptsByProject(pid);
+  return prompts.find(p => p.name === name);
 }
 export async function upsertPrompt(pid, name, content, { source = 'manual', isInitial = false } = {}) {
   await executeWithRetry({ sql: 'INSERT INTO prompts (project_id, name, content, source, is_initial, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(project_id, name) DO UPDATE SET content=excluded.content, source=excluded.source, updated_at=excluded.updated_at', args: [pid, name, content, source, isInitial ? 1 : 0, Date.now(), Date.now()] });
+  projectPromptsCache.delete(pid);
 }
 
 // Sessions
