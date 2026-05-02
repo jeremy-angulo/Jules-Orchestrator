@@ -18,7 +18,7 @@ import {
   getActiveTasks,
   setActiveTasks,
   getAllProjectStates,
-  getApiUsageSummary24h,
+
   getAgent,
   listAssignments,
   getAssignment,
@@ -32,8 +32,10 @@ import {
   closeJournalEntry,
   getSiteCheckConfig,
   updateSiteCheckConfig,
-  listProjectsConfig as listAllProjectsConfig
+  listProjectsConfig as listAllProjectsConfig,
+  pruneOldData,
 } from './db/database.js';
+import { recordDashboardMetric, getApiUsageSummary24h as getApiUsageSummary24hMem } from './services/metricsStore.js';
 import { sendOpsAlert } from './utils/alerting.js';
 import { getTokenStatusSummary } from './api/tokenRotation.js';
 
@@ -83,10 +85,17 @@ export class ControlCenter {
   }
 
   async getAssignmentsCached() {
-    if (!this.cache.assignments) {
-        this.cache.assignments = await listAssignments();
+    const now = Date.now();
+    if (!this.cache.assignments || (now - (this.cache.assignmentsTsMs || 0)) > 30_000) {
+      this.cache.assignments = await listAssignments();
+      this.cache.assignmentsTsMs = now;
     }
     return this.cache.assignments;
+  }
+
+  _invalidateAssignmentsCache() {
+    this.cache.assignments = null;
+    this.cache.assignmentsTsMs = 0;
   }
 
   async getAgentsCached() {
@@ -523,11 +532,20 @@ export class ControlCenter {
     }
 
     if (!this.statsInterval) {
-      this.statsInterval = setInterval(() => {
+      const recordMetrics = () => {
+        const status = this.getStatus();
+        pruneOldData; // already scheduled separately
+        Promise.all([
+          recordDashboardMetric('active_runners', status.runners.length),
+          recordDashboardMetric('active_tasks', status.projects.reduce((s, p) => s + p.activeTasks, 0)),
+          recordDashboardMetric('locked_projects', status.projects.filter(p => p.locked).length),
+        ]).catch(() => {});
         for (const project of this.projects) {
           this.updateProjectStats(project.id).catch(() => {});
         }
-      }, 5 * 60 * 1000);
+      };
+      recordMetrics();
+      this.statsInterval = setInterval(recordMetrics, 5 * 60 * 1000);
     }
 
     // Auto-merge service (every 10 minutes)
@@ -535,6 +553,13 @@ export class ControlCenter {
       this.systemRunners.autoMergeService = setInterval(() => this._autoMergeCycle(), 10 * 60 * 1000);
       this.log('info', 'Auto-merge service started (10m interval)');
       this._autoMergeCycle().catch(() => {}); // Initial run
+    }
+
+    // DB pruning — delete rows older than 7 days from high-volume tables (every 6h)
+    if (!this.systemRunners.dbPruner) {
+      const runPrune = () => pruneOldData(7).then(r => this.log('info', 'DB pruned', r)).catch(() => {});
+      runPrune();
+      this.systemRunners.dbPruner = setInterval(runPrune, 6 * 60 * 60 * 1000);
     }
 
     for (const project of this.projects) {
@@ -958,7 +983,7 @@ export class ControlCenter {
 
   async getStatus() {
     const states = await getAllProjectStates();
-    const usage = await getApiUsageSummary24h();
+    const usage = await getApiUsageSummary24hMem();
 
     const projects = [];
     for (const project of this.projects) {
