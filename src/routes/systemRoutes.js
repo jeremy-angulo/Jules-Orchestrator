@@ -2,18 +2,19 @@ import express from 'express';
 import { controlCenter } from '../controlCenter.js';
 import { apiRateLimiter } from '../middleware/securityMiddleware.js';
 import { requirePermission, requireCriticalConfirmation, audit } from '../middleware/authMiddleware.js';
-import { 
-    recordDashboardMetric, 
-    listDashboardMetrics, 
-    listAuditEvents, 
-    getServiceErrorSummary, 
-    listServiceChecks, 
-    listServiceErrors, 
+import {
+    listAuditEvents,
+    listTokenNames,
+    upsertTokenName,
+} from '../db/database.js';
+import {
+    listDashboardMetricsBatch,
+    getServiceErrorSummary,
+    listServiceChecks,
+    listServiceErrors,
     getServiceUptime,
     recordServiceCheck,
-    listTokenNames,
-    upsertTokenName
-} from '../db/database.js';
+} from '../services/metricsStore.js';
 import { getTokenStatusSummary } from '../api/tokenRotation.js';
 import { getSession, listActivities } from '../api/julesClient.js';
 
@@ -69,24 +70,35 @@ router.get('/status', apiRateLimiter, async (req, res) => {
     try {
         let payload = await controlCenter.getStatus();
         payload.currentUser = req.dashboardUser;
-        await recordDashboardMetric('active_runners', payload.runners.length);
-        await recordDashboardMetric('active_tasks', payload.projects.reduce((sum, p) => sum + p.activeTasks, 0));
-        await recordDashboardMetric('locked_projects', payload.projects.filter((p) => p.locked).length);
+        // Metrics are written by the statsInterval (every 5 min), not on every poll.
         res.status(200).json(payload);
     } catch (err) {
         res.status(500).json({ error: String(err.message) });
     }
 });
 
+// Cache health-status for 60s — it's monitoring data, sub-minute freshness not needed.
+let _healthStatusCache = null;
+let _healthStatusCachedAt = 0;
+const HEALTH_CACHE_MS = 60_000;
+
 router.get('/health-status', apiRateLimiter, requirePermission('keys.read'), async (req, res) => {
     try {
         const hours = Math.max(1, Number(req.query.hours || 24));
+        const now = Date.now();
+        if (_healthStatusCache && (now - _healthStatusCachedAt) < HEALTH_CACHE_MS && _healthStatusCache.hours === hours) {
+            return res.status(200).json(_healthStatusCache);
+        }
+
         const external = String(process.env.WEBSITE_HEALTH_URL || process.env.RENDER_EXTERNAL_URL || '').trim();
         const websiteUrl = external || (req.protocol + '://' + req.get('host') + '/health');
 
         const buildService = async (serviceId, label) => {
-            const summary = await getServiceErrorSummary(serviceId, hours);
-            const checks = await listServiceChecks(serviceId, 40);
+            const [summary, checks, recentErrors] = await Promise.all([
+                getServiceErrorSummary(serviceId, hours),
+                listServiceChecks(serviceId, 40),
+                listServiceErrors(serviceId, hours, 20),
+            ]);
             const latestCheck = checks[0] || null;
             return {
                 id: serviceId,
@@ -96,25 +108,31 @@ router.get('/health-status', apiRateLimiter, requirePermission('keys.read'), asy
                 windowHours: hours,
                 latencyMs: latestCheck?.responseMs ?? null,
                 lastCheckedAt: latestCheck ? new Date(latestCheck.timestamp).toISOString() : null,
-                recentErrors: await listServiceErrors(serviceId, hours, 20)
+                recentErrors,
             };
         };
 
-        const services = await Promise.all([
-            buildService('github_api', 'GitHub API'),
-            buildService('jules_api', 'Jules API'),
-            buildService('website', 'Orchestrator Health')
+        const [services, uptime7d] = await Promise.all([
+            Promise.all([
+                buildService('github_api', 'GitHub API'),
+                buildService('jules_api', 'Jules API'),
+                buildService('website', 'Orchestrator Health'),
+            ]),
+            getServiceUptime('website', 24 * 7),
         ]);
 
         const website = services[2];
-        const uptime7d = await getServiceUptime('website', 24 * 7);
+        const recentChecks = await listServiceChecks('website', 30);
         website.ping = {
             url: websiteUrl,
             uptime7d: uptime7d.uptimePercent,
-            checks: (await listServiceChecks('website', 30)).slice().reverse().map(c => !!c.ok)
+            checks: recentChecks.slice().reverse().map(c => !!c.ok),
         };
 
-        res.status(200).json({ hours, services });
+        const payload = { hours, services };
+        _healthStatusCache = payload;
+        _healthStatusCachedAt = now;
+        res.status(200).json(payload);
     } catch (err) {
         res.status(500).json({ error: String(err.message) });
     }
@@ -133,10 +151,7 @@ router.get('/audit-events', apiRateLimiter, requirePermission('audit.read'), asy
 
 router.get('/analytics/metrics', apiRateLimiter, requirePermission('analytics.read'), async (req, res) => {
     const hours = Number(req.query.hours || 24);
-    const series = {};
-    for (const key of ['active_runners', 'active_tasks', 'locked_projects']) {
-        series[key] = await listDashboardMetrics(key, hours);
-    }
+    const series = await listDashboardMetricsBatch(['active_runners', 'active_tasks', 'locked_projects'], hours);
     res.status(200).json({ hours, series });
 });
 

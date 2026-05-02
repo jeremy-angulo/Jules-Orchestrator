@@ -1,5 +1,6 @@
 import { GLOBAL_CONFIG } from '../config.js';
-import { getTokenUsage24h, getTokenName } from '../db/database.js';
+import { getTokenName } from '../db/database.js';
+import { getTokenUsage24h } from '../services/metricsStore.js';
 
 function maskToken(token) {
   if (!token) return 'not-configured';

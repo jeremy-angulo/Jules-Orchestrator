@@ -3,11 +3,11 @@ import { controlCenter } from '../controlCenter.js';
 import { listSources, getSource, getSession, listActivities } from '../api/julesClient.js';
 import { mergeOpenPRs, closePR, mergePRWithResult } from '../api/githubClient.js';
 import { getCachedPRs, invalidatePRCache } from '../services/githubService.js';
-import { 
-    listAgentSessions, 
-    upsertProjectConfig, 
-    getProjectConfig, 
-    deleteProjectConfig, 
+import {
+    listAgentSessions,
+    upsertProjectConfig,
+    getProjectConfig,
+    deleteProjectConfig,
     deleteAssignmentsByProject,
     listAssignments,
     toggleAssignment,
@@ -19,13 +19,7 @@ import {
     updateAgent,
     deleteAgent,
     reorderAgents,
-    recordDashboardMetric,
-    listDashboardMetrics,
     listAuditEvents,
-    getServiceErrorSummary,
-    listServiceChecks,
-    listServiceErrors,
-    getServiceUptime
 } from '../db/database.js';
 import { getTokenStatusSummary } from '../api/tokenRotation.js';
 import { apiRateLimiter } from '../middleware/securityMiddleware.js';
@@ -37,11 +31,13 @@ import assignmentRoutes from './assignmentRoutes.js';
 import systemRoutes from './systemRoutes.js';
 import julesRoutes from './julesRoutes.js';
 import userRoutes from './userRoutes.js';
+import siteCheckRoutes from './siteCheckRoutes.js';
 
 const router = express.Router();
 
 // Register modular routes
 router.use('/projects', projectRoutes);
+router.use('/projects/:projectId/site-check', siteCheckRoutes);
 router.use('/agents', agentRoutes);
 router.use('/assignments', assignmentRoutes);
 router.use('/jules', julesRoutes);

@@ -5,16 +5,17 @@ import { mergeOpenPRs } from '../api/githubClient.js';
 import { getCachedPRs, invalidatePRCache } from '../services/githubService.js';
 import { apiRateLimiter } from '../middleware/securityMiddleware.js';
 import { requirePermission, requireCriticalConfirmation, audit } from '../middleware/authMiddleware.js';
-import { 
-    listAgentSessions, 
-    upsertProjectConfig, 
-    getProjectConfig, 
+import {
+    listAgentSessions,
+    upsertProjectConfig,
+    getProjectConfig,
     listProjectsConfig,
-    deleteProjectConfig, 
+    deleteProjectConfig,
     deleteAssignmentsByProject,
     listAssignments,
     createAssignment,
-    getAssignment
+    getAssignment,
+    listJournalByProject
 } from '../db/database.js';
 import { mergePRWithResult, closePR } from '../api/githubClient.js';
 
@@ -130,6 +131,16 @@ router.post('/add', apiRateLimiter, requirePermission('projects.add'), async (re
 router.get('/:projectId/sessions', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
     const sessions = await listAgentSessions(req.params.projectId);
     res.status(200).json({ sessions });
+});
+
+router.get('/:projectId/journal', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {
+    try {
+        const limit = Math.min(Number(req.query.limit) || 50, 200);
+        const entries = await listJournalByProject(req.params.projectId, limit);
+        res.status(200).json({ journal: entries });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
 });
 
 router.get('/:projectId/assignments', apiRateLimiter, requirePermission('dashboard.read'), async (req, res) => {

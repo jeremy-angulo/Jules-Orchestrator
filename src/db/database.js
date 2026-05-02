@@ -62,12 +62,6 @@ export async function initTables() {
       locked_at INTEGER,
       lock_reason TEXT
     )`,
-    `CREATE TABLE IF NOT EXISTS api_calls_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      token TEXT NOT NULL,
-      agent_name TEXT NOT NULL,
-      timestamp INTEGER NOT NULL
-    )`,
     `CREATE TABLE IF NOT EXISTS audit_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       timestamp INTEGER NOT NULL,
@@ -77,12 +71,6 @@ export async function initTables() {
       target TEXT,
       details TEXT,
       ip TEXT
-    )`,
-    `CREATE TABLE IF NOT EXISTS dashboard_metrics (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp INTEGER NOT NULL,
-      metric_key TEXT NOT NULL,
-      metric_value REAL NOT NULL
     )`,
     `CREATE TABLE IF NOT EXISTS dashboard_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,15 +138,6 @@ export async function initTables() {
       updated_at INTEGER NOT NULL,
       UNIQUE(project_id, name)
     )`,
-    `CREATE TABLE IF NOT EXISTS service_checks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      service TEXT NOT NULL,
-      ok BOOLEAN NOT NULL,
-      response_ms INTEGER,
-      error_message TEXT,
-      timestamp INTEGER NOT NULL,
-      source TEXT
-    )`,
     `CREATE TABLE IF NOT EXISTS token_names (
       token_index INTEGER PRIMARY KEY,
       custom_name TEXT NOT NULL,
@@ -173,14 +152,25 @@ export async function initTables() {
       token_index INTEGER,
       started_at INTEGER NOT NULL,
       ended_at INTEGER
+    )`,
+    `CREATE TABLE IF NOT EXISTS journal (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      assignment_id INTEGER,
+      project_id TEXT NOT NULL,
+      agent_name TEXT NOT NULL,
+      intent TEXT,
+      summary TEXT,
+      status TEXT NOT NULL DEFAULT 'running',
+      pr_url TEXT,
+      started_at INTEGER NOT NULL,
+      ended_at INTEGER,
+      metadata JSON
     )`
   ], "write");
 
   // Migration: Ensure tables match the expected schema
   const migrations = [
-    "ALTER TABLE service_checks ADD COLUMN service TEXT",
-    "ALTER TABLE service_checks ADD COLUMN source TEXT",
-    "ALTER TABLE service_checks ADD COLUMN error_message TEXT",
     "ALTER TABLE agent_sessions ADD COLUMN started_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN created_at INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN ended_at INTEGER",
@@ -189,7 +179,22 @@ export async function initTables() {
     "ALTER TABLE assignments ADD COLUMN concurrency INTEGER DEFAULT 1",
     "ALTER TABLE token_names ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)",
     "ALTER TABLE project_states ADD COLUMN locked_at INTEGER",
-    "ALTER TABLE project_states ADD COLUMN lock_reason TEXT"
+    "ALTER TABLE project_states ADD COLUMN lock_reason TEXT",
+    // Site Check feature
+    "ALTER TABLE projects_config ADD COLUMN site_check_enabled BOOLEAN NOT NULL DEFAULT 0",
+    "ALTER TABLE projects_config ADD COLUMN site_check_base_url TEXT",
+    "ALTER TABLE projects_config ADD COLUMN site_check_pause_ms INTEGER NOT NULL DEFAULT 5000",
+    "ALTER TABLE projects_config ADD COLUMN site_check_locale TEXT NOT NULL DEFAULT 'fr'",
+    "ALTER TABLE site_pages ADD COLUMN screenshot_path TEXT",
+    "ALTER TABLE site_pages ADD COLUMN issues JSON",
+    // Indexes — fix 412M row reads from full-table scans
+    "CREATE INDEX IF NOT EXISTS idx_agent_sessions_project   ON agent_sessions(project_id, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_journal_project          ON journal(project_id, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_journal_assignment       ON journal(assignment_id, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_site_pages_pick          ON site_pages(project_id, locked_by, last_screenshot_at, priority)",
+    "CREATE INDEX IF NOT EXISTS idx_assignments_project      ON assignments(project_id)",
+    "CREATE INDEX IF NOT EXISTS idx_prompts_project          ON prompts(project_id)",
+    "CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp      ON audit_log(timestamp)"
   ];
 
   for (const sql of migrations) {
@@ -200,6 +205,26 @@ export async function initTables() {
       // Ignore errors (like column already exists)
     }
   }
+}
+
+// Prune rows older than N days from high-volume append-only tables.
+// Run periodically (e.g. every 6h) to prevent unbounded table growth and full-table scans.
+export async function pruneOldData(daysToKeep = 7) {
+  const cutoff = Date.now() - daysToKeep * 24 * 60 * 60 * 1000;
+  const results = {};
+  const tables = [
+    { table: 'audit_log',    col: 'timestamp' },
+    { table: 'agent_sessions', col: 'started_at' },
+  ];
+  for (const { table, col } of tables) {
+    try {
+      const r = await executeWithRetry({ sql: `DELETE FROM ${table} WHERE ${col} < ?`, args: [cutoff] });
+      results[table] = r.rowsAffected;
+    } catch (e) {
+      results[table] = `error: ${e.message}`;
+    }
+  }
+  return results;
 }
 
 // Basic CRUD
@@ -240,49 +265,7 @@ export async function getAllProjectStates() {
   }));
 }
 
-// API usage
-export async function recordApiCall(token, agentName) {
-  await executeWithRetry({ sql: 'INSERT INTO api_calls_log (token, agent_name, timestamp) VALUES (?, ?, ?)', args: [token, agentName, Date.now()] });
-}
-export async function getApiUsageSummary24h() {
-  const since = Date.now() - 24 * 60 * 60 * 1000;
-  const total = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM api_calls_log WHERE timestamp >= ?', args: [since] });
-  const byAgent = await executeWithRetry({ sql: 'SELECT agent_name as agentName, COUNT(*) as total FROM api_calls_log WHERE timestamp >= ? GROUP BY agent_name ORDER BY total DESC', args: [since] });
-  const byToken = await executeWithRetry({ sql: 'SELECT token, COUNT(*) as total FROM api_calls_log WHERE timestamp >= ? GROUP BY token ORDER BY total DESC', args: [since] });
-  return { total: Number(total.rows[0].c), byAgent: byAgent.rows.map(r => ({ agentName: r.agentName, total: Number(r.total) })), byToken: byToken.rows.map(r => ({ token: r.token, total: Number(r.total) })) };
-}
-
-// Service checks
-export async function recordServiceCheck(serviceId, ok, { statusCode = 200, responseMs = 0, errorMessage = null, source = 'monitor' } = {}) {
-  await executeWithRetry({ sql: 'INSERT INTO service_checks (service, ok, response_ms, error_message, timestamp, source) VALUES (?, ?, ?, ?, ?, ?)', args: [serviceId, ok ? 1 : 0, responseMs, errorMessage, Date.now(), source] });
-}
-export async function recordServiceError(serviceId, error, source = 'monitor') {
-  const sourceStr = typeof source === 'object' && source !== null ? JSON.stringify(source) : String(source);
-  await recordServiceCheck(serviceId, false, { errorMessage: String(error), source: sourceStr });
-}
-export async function listServiceChecks(serviceId, limit = 50) {
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM service_checks WHERE service = ? ORDER BY id DESC LIMIT ?', args: [serviceId, limit] });
-  return rs.rows;
-}
-export async function getServiceErrorSummary(serviceId, hours = 24) {
-  const since = Date.now() - hours * 60 * 60 * 1000;
-  const rs = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service = ? AND ok = 0 AND timestamp >= ?', args: [serviceId, since] });
-  return { serviceId, errors: Number(rs.rows[0].c), windowHours: hours };
-}
-export async function listServiceErrors(serviceId, hours = 24, limit = 50) {
-  const since = Date.now() - hours * 60 * 60 * 1000;
-  const rs = await executeWithRetry({ sql: 'SELECT * FROM service_checks WHERE service = ? AND ok = 0 AND timestamp >= ? ORDER BY id DESC LIMIT ?', args: [serviceId, since, limit] });
-  return rs.rows;
-}
-export async function getServiceUptime(serviceId, hours = 24) {
-  const since = Date.now() - hours * 60 * 60 * 1000;
-  const total = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service = ? AND timestamp >= ?', args: [serviceId, since] });
-  const ok = await executeWithRetry({ sql: 'SELECT COUNT(*) as c FROM service_checks WHERE service = ? AND ok = 1 AND timestamp >= ?', args: [serviceId, since] });
-  const count = Number(total.rows[0].c);
-  return { uptimePercent: count === 0 ? 100 : (Number(ok.rows[0].c) / count) * 100 };
-}
-
-// Audit & Metrics
+// Audit
 export async function recordAuditEvent(evt) {
   await executeWithRetry({ sql: 'INSERT INTO audit_log (timestamp, user_id, user_email, action, target, details, ip) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [Date.now(), evt.userId, evt.userEmail, evt.action, evt.target, evt.details ? JSON.stringify(evt.details) : null, evt.ip] });
 }
@@ -290,14 +273,6 @@ export async function listAuditEvents(hours = 24, limit = 200) {
   const rs = await executeWithRetry({ sql: 'SELECT * FROM audit_log WHERE timestamp >= ? ORDER BY id DESC LIMIT ?', args: [Date.now() - (hours * 3600000), limit] });
   return rs.rows.map(r => ({ ...r, details: r.details ? JSON.parse(r.details) : null }));
 }
-export async function recordDashboardMetric(key, val) {
-  await executeWithRetry({ sql: 'INSERT INTO dashboard_metrics (timestamp, metric_key, metric_value) VALUES (?, ?, ?)', args: [Date.now(), key, val] });
-}
-export async function listDashboardMetrics(key, hours = 24) {
-  const rs = await executeWithRetry({ sql: 'SELECT timestamp, metric_value as value FROM dashboard_metrics WHERE metric_key = ? AND timestamp >= ? ORDER BY timestamp ASC', args: [key, Date.now() - (hours * 3600000)] });
-  return rs.rows;
-}
-
 // Tokens
 export async function listTokenNames() {
   const rs = await executeWithRetry('SELECT * FROM token_names');
@@ -310,12 +285,6 @@ export async function getTokenName(idx) {
 export async function upsertTokenName(idx, name) {
   await executeWithRetry({ sql: 'INSERT INTO token_names (token_index, custom_name) VALUES (?, ?) ON CONFLICT(token_index) DO UPDATE SET custom_name = excluded.custom_name', args: [idx, name] });
 }
-export async function getTokenUsage24h(token) {
-  const since = Date.now() - 24 * 60 * 60 * 1000;
-  const rs = await executeWithRetry({ sql: 'SELECT COUNT(*) as total FROM api_calls_log WHERE token = ? AND timestamp >= ?', args: [token, since] });
-  return Number(rs.rows[0]?.total || 0);
-}
-
 // Users & Auth
 export async function hasAnyDashboardUser() {
   const rs = await executeWithRetry('SELECT COUNT(*) as c FROM dashboard_users');
@@ -357,6 +326,137 @@ export async function updateDashboardUserPassword(id, hash) {
 }
 export async function deleteDashboardUser(id) {
   await executeWithRetry({ sql: 'DELETE FROM dashboard_users WHERE id = ?', args: [id] });
+}
+
+// ── Site Check ────────────────────────────────────────────────────────────────
+
+export async function getSiteCheckConfig(projectId) {
+  const rs = await executeWithRetry({
+    sql: 'SELECT site_check_enabled, site_check_base_url, site_check_pause_ms, site_check_locale FROM projects_config WHERE id = ?',
+    args: [projectId],
+  });
+  const row = rs.rows[0];
+  if (!row) return null;
+  return {
+    enabled: !!row.site_check_enabled,
+    baseUrl: row.site_check_base_url || null,
+    pauseMs: Number(row.site_check_pause_ms || 5000),
+    locale: row.site_check_locale || 'fr',
+  };
+}
+
+export async function updateSiteCheckConfig(projectId, { enabled, baseUrl, pauseMs, locale }) {
+  await executeWithRetry({
+    sql: `UPDATE projects_config
+          SET site_check_enabled = ?, site_check_base_url = ?, site_check_pause_ms = ?,
+              site_check_locale = ?, updated_at = ?
+          WHERE id = ?`,
+    args: [enabled ? 1 : 0, baseUrl ?? null, pauseMs ?? 5000, locale ?? 'fr', Date.now(), projectId],
+  });
+}
+
+// Atomic pick + lock in a single statement — safe for concurrent runners.
+// Returns the locked page or null if no unlocked page is available.
+export async function pickAndLockSitePage(projectId, agentId) {
+  const rs = await executeWithRetry({
+    sql: `UPDATE site_pages
+          SET locked_by = ?, locked_at = datetime('now')
+          WHERE id = (
+            SELECT id FROM site_pages
+            WHERE project_id = ? AND locked_by IS NULL
+            ORDER BY last_screenshot_at ASC NULLS FIRST, priority ASC
+            LIMIT 1
+          )
+          AND locked_by IS NULL
+          RETURNING *`,
+    args: [agentId, projectId],
+  });
+  const row = rs.rows[0];
+  if (!row) return null;
+  return { ...row, issues: row.issues ? JSON.parse(row.issues) : null };
+}
+
+// Kept for external callers; internally prefer pickAndLockSitePage.
+export async function lockSitePage(pageId, agentId) {
+  await executeWithRetry({
+    sql: `UPDATE site_pages SET locked_by = ?, locked_at = datetime('now') WHERE id = ? AND locked_by IS NULL`,
+    args: [agentId, pageId],
+  });
+}
+
+export async function unlockSitePage(pageId) {
+  await executeWithRetry({
+    sql: `UPDATE site_pages SET locked_by = NULL, locked_at = NULL WHERE id = ?`,
+    args: [pageId],
+  });
+}
+
+export async function updateSitePageResult(pageId, { status, screenshotPath, issues }) {
+  const now = new Date().toISOString();
+  await executeWithRetry({
+    sql: `UPDATE site_pages
+          SET status = ?, screenshot_path = ?, issues = ?,
+              last_screenshot_at = ?, last_analysis_at = ?,
+              locked_by = NULL, locked_at = NULL
+          WHERE id = ?`,
+    args: [
+      status,
+      screenshotPath ?? null,
+      issues ? JSON.stringify(issues) : null,
+      now, now,
+      pageId,
+    ],
+  });
+}
+
+export async function markSitePageFixed(pageId) {
+  await executeWithRetry({
+    sql: `UPDATE site_pages SET status = 'OK', last_correction_at = datetime('now') WHERE id = ?`,
+    args: [pageId],
+  });
+}
+
+export async function getSiteCheckStats(projectId) {
+  const rs = await executeWithRetry({
+    sql: `SELECT
+            COUNT(*) as total,
+            SUM(CASE WHEN status = 'OK' THEN 1 ELSE 0 END) as ok,
+            SUM(CASE WHEN status = 'FIX' THEN 1 ELSE 0 END) as fix,
+            SUM(CASE WHEN status = 'ANALYZE' THEN 1 ELSE 0 END) as analyze,
+            SUM(CASE WHEN last_screenshot_at IS NULL THEN 1 ELSE 0 END) as never_analyzed
+          FROM site_pages WHERE project_id = ?`,
+    args: [projectId],
+  });
+  const row = rs.rows[0];
+  return {
+    total: Number(row?.total || 0),
+    ok: Number(row?.ok || 0),
+    fix: Number(row?.fix || 0),
+    analyze: Number(row?.analyze || 0),
+    neverAnalyzed: Number(row?.never_analyzed || 0),
+  };
+}
+
+export async function listSitePages(projectId, { status, group, limit = 100, offset = 0 } = {}) {
+  const conditions = ['project_id = ?'];
+  const args = [projectId];
+  if (status) { conditions.push('status = ?'); args.push(status); }
+  if (group) { conditions.push('group_name = ?'); args.push(group); }
+  args.push(limit, offset);
+  const rs = await executeWithRetry({
+    sql: `SELECT * FROM site_pages WHERE ${conditions.join(' AND ')}
+          ORDER BY last_screenshot_at ASC NULLS FIRST, priority ASC LIMIT ? OFFSET ?`,
+    args,
+  });
+  return rs.rows.map(r => ({ ...r, issues: r.issues ? JSON.parse(r.issues) : null }));
+}
+
+export async function releaseStaleSitePageLocks(maxAgeMinutes = 30) {
+  await executeWithRetry({
+    sql: `UPDATE site_pages SET locked_by = NULL, locked_at = NULL
+          WHERE locked_at < datetime('now', ? || ' minutes')`,
+    args: [`-${maxAgeMinutes}`],
+  });
 }
 
 // Agents
@@ -481,4 +581,53 @@ export async function listAgentSessions(pid) {
 export async function getLastAgentSession(aid) {
   const rs = await executeWithRetry({ sql: 'SELECT * FROM agent_sessions WHERE assignment_id = ? ORDER BY started_at DESC LIMIT 1', args: [aid] });
   return rs.rows[0];
+}
+
+// ── Journal ───────────────────────────────────────────────────────────────────
+
+export async function createJournalEntry({ sessionId, assignmentId, projectId, agentName, intent }) {
+  await executeWithRetry({
+    sql: `INSERT INTO journal (session_id, assignment_id, project_id, agent_name, intent, status, started_at)
+          VALUES (?, ?, ?, ?, ?, 'running', ?)`,
+    args: [sessionId, assignmentId ?? null, projectId, agentName, intent ?? null, Date.now()],
+  });
+}
+
+export async function closeJournalEntry(sessionId, { summary, status, prUrl = null, metadata = null } = {}) {
+  await executeWithRetry({
+    sql: `UPDATE journal
+          SET summary = ?, status = ?, pr_url = ?, ended_at = ?, metadata = ?
+          WHERE session_id = ?`,
+    args: [
+      summary ?? null,
+      status ?? 'completed',
+      prUrl ?? null,
+      Date.now(),
+      metadata ? JSON.stringify(metadata) : null,
+      sessionId,
+    ],
+  });
+}
+
+export async function getJournalEntry(sessionId) {
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM journal WHERE session_id = ?', args: [sessionId] });
+  const row = rs.rows[0];
+  if (!row) return null;
+  return { ...row, metadata: row.metadata ? JSON.parse(row.metadata) : null };
+}
+
+export async function listJournalByProject(projectId, limit = 50) {
+  const rs = await executeWithRetry({
+    sql: 'SELECT * FROM journal WHERE project_id = ? ORDER BY started_at DESC LIMIT ?',
+    args: [projectId, limit],
+  });
+  return rs.rows.map(r => ({ ...r, metadata: r.metadata ? JSON.parse(r.metadata) : null }));
+}
+
+export async function listJournalByAssignment(assignmentId, limit = 20) {
+  const rs = await executeWithRetry({
+    sql: 'SELECT * FROM journal WHERE assignment_id = ? ORDER BY started_at DESC LIMIT ?',
+    args: [assignmentId, limit],
+  });
+  return rs.rows.map(r => ({ ...r, metadata: r.metadata ? JSON.parse(r.metadata) : null }));
 }

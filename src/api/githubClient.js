@@ -1,6 +1,6 @@
 import { log } from "../utils/logger.js";
 import { sleep } from '../utils/helpers.js';
-import { recordServiceCheck, recordServiceError } from '../db/database.js';
+import { recordServiceCheck, recordServiceError } from '../services/metricsStore.js';
 
 async function githubRequest(project, url, options = {}, context = 'github_request') {
   const startedAt = Date.now();

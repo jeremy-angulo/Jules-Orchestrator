@@ -557,6 +557,7 @@ function renderProjectDetail(data, assignments) {
     { id: 'prs', label: 'Pull Requests', badge: null },
     { id: 'agents', label: 'Agents', badge: summary.runningCount || null },
     { id: 'pipelines', label: 'Pipelines', badge: null },
+    { id: 'site-check', label: 'Site Check', badge: null },
   ];
 
   const tabBar = document.createElement('div');
@@ -589,6 +590,7 @@ function renderProjectDetail(data, assignments) {
     if (tabId === 'prs') renderPRTab(panels, project);
     else if (tabId === 'agents') renderAgentsTab(panels, project, assignments, runners);
     else if (tabId === 'pipelines') renderPipelinesTab(panels, project);
+    else if (tabId === 'site-check') renderSiteCheckTab(panels, project);
   }
 
   tabBar.addEventListener('click', e => {
@@ -786,6 +788,169 @@ function renderPipelinesTab(container, project) {
   // Bind buttons
   sec.querySelector('#createPipelineBtn')?.addEventListener('click', () => openPipelineModal(project.id));
   sec.querySelector('#editPipelineBtn')?.addEventListener('click', () => openPipelineModal(project.id, project.pipelineConfig));
+}
+
+// =========================================================
+// Site Check Tab
+// =========================================================
+
+async function renderSiteCheckTab(container, project) {
+  const sec = document.createElement('div');
+  sec.innerHTML = '<div class="card"><p class="muted small">Loading site check data…</p></div>';
+  container.appendChild(sec);
+
+  let siteCheckData = { config: { enabled: false, baseUrl: '', pauseMs: 5000 }, stats: {}, running: false };
+  let pages = [];
+
+  try {
+    const [scRes, pagesRes] = await Promise.all([
+      fetch(`/api/projects/${project.id}/site-check`).then(r => r.json()),
+      fetch(`/api/projects/${project.id}/site-check/pages?limit=200`).then(r => r.json()),
+    ]);
+    siteCheckData = scRes;
+    pages = pagesRes.pages || [];
+  } catch (e) {
+    sec.innerHTML = `<div class="card" style="color:var(--red)">Error loading site check: ${escapeHtml(e.message)}</div>`;
+    return;
+  }
+
+  const { config, stats, running } = siteCheckData;
+  const totalAnalyzed = (stats.total || 0) - (stats.neverAnalyzed || 0);
+  const pct = stats.total ? Math.round((totalAnalyzed / stats.total) * 100) : 0;
+  const gitBase = project.githubRepo ? `https://github.com/${project.githubRepo}/blob/${project.githubBranch || 'dev'}/` : null;
+
+  sec.innerHTML = `
+    <div class="card" style="margin-bottom:1rem">
+      <div class="panel-head">
+        <h2>Site Check</h2>
+        <span class="status-pill ${running ? 'status-ok' : 'status-muted'}">${running ? 'Running' : 'Stopped'}</span>
+      </div>
+      <p class="muted small" style="margin-bottom:1rem">
+        Screenshots each page in order (oldest first), analyzes with Claude Vision, and opens a Jules fix session if issues are found.
+        Screenshots are committed to <code>screenshots/{locale}/{path}.png</code> in the repo.
+      </p>
+
+      <div class="form-group" style="display:grid;grid-template-columns:1fr 120px 180px 140px;gap:12px;align-items:end;margin-bottom:1rem">
+        <div>
+          <label class="form-label">Site Base URL</label>
+          <input id="scBaseUrl" type="url" class="form-control" placeholder="https://yoursite.com" value="${escapeHtml(config.baseUrl || '')}" />
+        </div>
+        <div>
+          <label class="form-label">Locale analysée</label>
+          <select id="scLocale" class="form-control">
+            <option value="fr" ${(config.locale || 'fr') === 'fr' ? 'selected' : ''}>fr</option>
+            <option value="en" ${config.locale === 'en' ? 'selected' : ''}>en</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label">Pause entre pages (ms)</label>
+          <input id="scPauseMs" type="number" class="form-control" min="1000" step="1000" value="${config.pauseMs || 5000}" />
+        </div>
+        <button id="scToggleBtn" class="btn ${config.enabled ? 'btn-danger' : 'btn'}" type="button">
+          ${config.enabled ? 'Disable' : 'Enable'}
+        </button>
+      </div>
+
+      <div style="margin-bottom:1.5rem">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span class="small muted">Pages analyzed: ${totalAnalyzed} / ${stats.total || 0}</span>
+          <span class="small muted">${pct}%</span>
+        </div>
+        <div style="height:8px;background:var(--surface-2,#2a2a3a);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:var(--blue,#3f8cff);transition:width .3s"></div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:8px">
+          <span class="status-pill status-ok">✓ OK: ${stats.ok || 0}</span>
+          <span class="status-pill status-warn" style="background:rgba(255,180,0,.15);color:#ffb400">⚠ FIX: ${stats.fix || 0}</span>
+          <span class="status-pill status-muted">◌ Pending: ${(stats.neverAnalyzed || 0) + (stats.analyze || 0)}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="panel-head" style="margin-bottom:.75rem">
+        <h2>Pages</h2>
+        <div style="display:flex;gap:8px">
+          <select id="scFilterStatus" class="form-control" style="width:120px">
+            <option value="">All</option>
+            <option value="OK">OK</option>
+            <option value="FIX">FIX</option>
+            <option value="ANALYZE">Pending</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="scPagesTable">
+          <thead>
+            <tr>
+              <th>URL</th><th>Group</th><th>Status</th><th>Last check</th><th>Screenshot</th><th>Issues</th>
+            </tr>
+          </thead>
+          <tbody id="scPagesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  // Render page rows
+  function renderRows(filteredPages) {
+    const tbody = sec.querySelector('#scPagesBody');
+    tbody.innerHTML = filteredPages.map(p => {
+      const statusCls = p.status === 'OK' ? 'status-ok' : p.status === 'FIX' ? 'status-warn' : 'status-muted';
+      const statusLabel = p.status === 'OK' ? '✓ OK' : p.status === 'FIX' ? '⚠ FIX' : '◌ Pending';
+      const lastCheck = p.last_screenshot_at ? new Date(p.last_screenshot_at).toLocaleString() : 'Never';
+      const screenshotUrl = gitBase && p.screenshot_path ? `${gitBase}${p.screenshot_path}` : null;
+      const screenshotLink = screenshotUrl
+        ? `<a href="${escapeHtml(screenshotUrl)}" target="_blank" class="mono small">View</a>`
+        : '<span class="muted small">—</span>';
+      const issueCount = p.issues?.length ? `<span style="color:var(--red)">${p.issues.length} issue(s)</span>` : '<span class="muted">—</span>';
+
+      return `<tr>
+        <td class="mono small" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(p.url)}">${escapeHtml(p.url)}</td>
+        <td><span class="status-pill status-muted">${escapeHtml(p.group_name)}</span></td>
+        <td><span class="status-pill ${statusCls}">${statusLabel}</span></td>
+        <td class="small muted">${lastCheck}</td>
+        <td>${screenshotLink}</td>
+        <td>${issueCount}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="6" class="muted small" style="text-align:center">No pages match the filter</td></tr>';
+  }
+
+  renderRows(pages);
+
+  // Filters
+  function applyFilters() {
+    const status = sec.querySelector('#scFilterStatus').value;
+    renderRows(pages.filter(p => !status || p.status === status));
+  }
+  sec.querySelector('#scFilterStatus').addEventListener('change', applyFilters);
+
+  // Toggle button
+  sec.querySelector('#scToggleBtn').addEventListener('click', async () => {
+    const btn = sec.querySelector('#scToggleBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      const baseUrl = sec.querySelector('#scBaseUrl').value.trim();
+      const pauseMs = Number(sec.querySelector('#scPauseMs').value) || 5000;
+      const locale  = sec.querySelector('#scLocale').value;
+      const newEnabled = !config.enabled;
+      const res = await fetch(`/api/projects/${project.id}/site-check/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: newEnabled, baseUrl, pauseMs, locale }),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || 'Toggle failed');
+      showToast(`Site Check ${newEnabled ? 'enabled' : 'disabled'}`);
+      // Re-render tab
+      container.innerHTML = '';
+      renderSiteCheckTab(container, project);
+    } catch (e) {
+      showToast(`Error: ${e.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = config.enabled ? 'Disable' : 'Enable';
+    }
+  });
 }
 
 // =========================================================

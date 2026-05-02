@@ -2,8 +2,7 @@ import { GLOBAL_CONFIG } from '../config.js';
 import { sleep } from '../utils/helpers.js';
 import { checkAndMergePR } from './githubClient.js';
 import { getAvailableToken } from './tokenRotation.js';
-import { recordApiCall } from '../db/database.js';
-import { recordServiceCheck, recordServiceError } from '../db/database.js';
+import { recordApiCall, recordServiceCheck, recordServiceError } from '../services/metricsStore.js';
 import { log } from '../utils/logger.js';
 
 const JULES_API_BASE = "https://jules.googleapis.com/v1alpha";
@@ -228,7 +227,7 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         instruction,
         `${agentName} Task for ${project.id}`,
         formattedSourceId,
-        project.githubBranch || 'main', // Using configured branch or defaulting to main
+        options.startingBranch || project.githubBranch || 'main',
         "AUTO_CREATE_PR",
         requestOptions,
         options.media
@@ -277,8 +276,13 @@ export async function startAndMonitorSession(instruction, agentName, project, op
               const match = prUrl.match(/\/pull\/(\d+)$/);
               if (match) {
                   const prNumber = match[1];
-                  // On planifie une vérification et un merge automatique rapide
-                  setTimeout(() => checkAndMergePR(project, prNumber).catch(() => {}), 60000);
+                  // Notify caller with PR details before scheduling merge
+                  if (typeof options.onPRCreated === 'function') {
+                    options.onPRCreated({ prUrl, prNumber });
+                  } else {
+                    // Default: schedule auto-merge after 60s
+                    setTimeout(() => checkAndMergePR(project, prNumber).catch(() => {}), 60000);
+                  }
               }
           }
           if (!hasPR) {

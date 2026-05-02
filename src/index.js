@@ -45,6 +45,7 @@ async function main() {
   try {
     await controlCenter.init();
     console.log('ControlCenter initialized.');
+    await controlCenter.startAllSiteChecks();
   } catch (err) {
     console.error('Fatal error while starting ControlCenter:', err);
   }

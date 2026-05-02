@@ -17,6 +17,6 @@
   },
   "devDependencies": {
     "esmock": "^2.7.3",
-    "playwright": "^1.54.2"
+    "playwright": "^1.59.1"
   }
 }

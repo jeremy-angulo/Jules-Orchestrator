@@ -12,7 +12,7 @@ import apiRouter from './routes/api.js';
 
 // Helpers & Database
 import { hasAnyDashboardUser } from './auth/dashboardAuth.js';
-import { recordServiceCheck } from './db/database.js';
+import { recordServiceCheck } from './services/metricsStore.js';
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);

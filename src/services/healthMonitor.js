@@ -1,4 +1,4 @@
-import { recordServiceCheck, recordServiceError } from '../db/database.js';
+import { recordServiceCheck, recordServiceError } from './metricsStore.js';
 
 let websiteMonitorStarted = false;
 
