@@ -65,6 +65,36 @@ export class ControlCenter {
       perProjectPipelines: new Map()
     };
     this.projectStats = new Map(); // projectId -> { openPRCount, lastUpdate }
+    this.cache = {
+        assignments: null,
+        agents: null,
+        projectsConfig: null,
+        lastUpdated: 0
+    };
+  }
+
+  async invalidateCache() {
+    this.cache = {
+        assignments: null,
+        agents: null,
+        projectsConfig: null,
+        lastUpdated: 0
+    };
+  }
+
+  async getAssignmentsCached() {
+    if (!this.cache.assignments) {
+        this.cache.assignments = await listAssignments();
+    }
+    return this.cache.assignments;
+  }
+
+  async getAgentsCached() {
+      if (!this.cache.agents) {
+          const { listAgents } = await import('../src/db/database.js'); // Assuming listAgents is available
+          this.cache.agents = await listAgents();
+      }
+      return this.cache.agents;
   }
 
   async updateProjectStats(projectId) {
