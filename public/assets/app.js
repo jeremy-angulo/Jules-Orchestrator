@@ -830,12 +830,7 @@ async function renderSiteCheckTab(container, project) {
         Screenshots are committed to <code>screenshots/{locale}/{path}.png</code> in the repo.
       </p>
 
-      <div class="form-group" style="display:grid;grid-template-columns:1fr 120px 180px 140px;gap:12px;align-items:end;margin-bottom:1rem">
-        <div>
-          <label class="form-label">URL Canonique (Référence)</label>
-          <input id="scBaseUrl" type="url" class="form-control" placeholder="https://yoursite.com" value="${escapeHtml(config.baseUrl || '')}" />
-          <p class="muted x-small" style="margin-top:4px">L'agent Jules lancera le projet en local pour effectuer les tests visuels et techniques.</p>
-        </div>
+      <div class="form-group" style="display:grid;grid-template-columns:120px 180px 140px;gap:12px;align-items:end;margin-bottom:1rem">
         <div>
           <label class="form-label">Locale analysée</label>
           <select id="scLocale" class="form-control">
@@ -851,6 +846,7 @@ async function renderSiteCheckTab(container, project) {
           ${config.enabled ? 'Disable' : 'Enable'}
         </button>
       </div>
+      <p class="muted x-small" style="margin-top:-0.5rem;margin-bottom:1rem">L'agent Jules lancera automatiquement le projet en local pour effectuer les tests visuels et techniques.</p>
 
       <div style="margin-bottom:1.5rem">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px">
@@ -932,14 +928,13 @@ async function renderSiteCheckTab(container, project) {
     btn.disabled = true;
     btn.textContent = 'Saving…';
     try {
-      const baseUrl = sec.querySelector('#scBaseUrl').value.trim();
       const pauseMs = Number(sec.querySelector('#scPauseMs').value) || 5000;
       const locale  = sec.querySelector('#scLocale').value;
       const newEnabled = !config.enabled;
       const res = await fetch(`/api/projects/${project.id}/site-check/toggle`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: newEnabled, baseUrl, pauseMs, locale }),
+        body: JSON.stringify({ enabled: newEnabled, baseUrl: null, pauseMs, locale }),
       });
       if (!res.ok) throw new Error((await res.json()).error || 'Toggle failed');
       showToast(`Site Check ${newEnabled ? 'enabled' : 'disabled'}`);

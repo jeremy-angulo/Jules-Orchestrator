@@ -73,7 +73,7 @@ async function mergeWithRetry(project, prNumber) {
 
 // ── Prompt d'analyse (Jules prend les screenshots) ────────────────────────────
 
-function buildAnalysisPrompt(page, folder, fullUrl, baseUrl) {
+function buildAnalysisPrompt(page, folder) {
   const authLevel  = page.requires_admin ? 'admin' : page.requires_auth ? 'user' : 'none';
   const localePath = page.url; // Relative path from base URL
 
@@ -123,7 +123,7 @@ Vérifie que les 4 viewports ont été capturés dans \`${folder}/\`.
 
 // ── Prompt fix ────────────────────────────────────────────────────────────────
 
-function buildFixPrompt(page, folder, fullUrl, baseUrl) {
+function buildFixPrompt(page, folder) {
   const localePath = page.url;
 
   return `# Mission : Correction visuelle et technique — \`${page.url}\`
@@ -166,7 +166,6 @@ Ouvre une Pull Request avec tes modifications de code.
 
 export async function processPage(page, project, locale = 'fr', siteCheckAuth = null) {
   const localePath = `/${locale}${page.url === '/' ? '' : page.url}`;
-  const fullUrl    = `${project.siteCheckBaseUrl}${localePath}`;
   const folder     = pageToFolder(page.url, locale);
   const screenshotPath = `${folder}/desktop.png`;
 
@@ -177,7 +176,7 @@ export async function processPage(page, project, locale = 'fr', siteCheckAuth = 
   await updateSitePageResult(page.id, { status: 'ANALYZE', screenshotPath, issues: null });
 
   const hasPR = await startAndMonitorSession(
-    buildAnalysisPrompt(page, folder, fullUrl, project.siteCheckBaseUrl),
+    buildAnalysisPrompt(page, folder),
     'Site-Check-Analysis',
     project,
     {
@@ -211,7 +210,7 @@ export async function processPage(page, project, locale = 'fr', siteCheckAuth = 
 
   log('info', `[SiteCheck][${project.id}] Lancement agent fix — ${localePath}`);
   await updateSitePageResult(page.id, { status: 'FIX', screenshotPath, issues: null });
-  await startAndMonitorSession(buildFixPrompt(page, folder, fullUrl, project.siteCheckBaseUrl), 'Site-Check-Fix', project, {});
+  await startAndMonitorSession(buildFixPrompt(page, folder), 'Site-Check-Fix', project, {});
 
   log('info', `[SiteCheck][${project.id}] ✓ Cycle complet pour ${localePath}`);
 }
