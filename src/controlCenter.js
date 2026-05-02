@@ -224,7 +224,8 @@ export class ControlCenter {
       killAt: runner.killAt,
       errorCount: runner.errorCount,
       lastError: runner.lastError,
-      sessionId: runner.sessionId
+      sessionId: runner.sessionId,
+      tokenInfo: runner.tokenInfo
     };
   }
 
@@ -410,6 +411,7 @@ export class ControlCenter {
         await startAndMonitorSession(prompt, label, project, {
           shouldStop: () => runner.shouldStop,
           preferredTokenId: runner.details?.preferredTokenId || null,
+          onTokenPicked: (info) => { runner.tokenInfo = info; },
           onSessionCreated: (id) => { runner.sessionId = id; }
         });
         runner.iterations = 1;
@@ -446,7 +448,8 @@ export class ControlCenter {
     runner.promise = (async () => {
       try {
         await runBuildAndMergePipelineOnce(project, { 
-          shouldStop: () => runner.shouldStop
+          shouldStop: () => runner.shouldStop,
+          onTokenPicked: (info) => { runner.tokenInfo = info; }
         });
         runner.iterations = 1;
         this._markRunnerStopped(runner, 'completed');
@@ -489,7 +492,8 @@ export class ControlCenter {
         try {
           await startAndMonitorSession(prompt, label, project, {
             shouldStop: () => runner.shouldStop,
-            preferredTokenId: runner.details?.preferredTokenId || null
+            preferredTokenId: runner.details?.preferredTokenId || null,
+            onTokenPicked: (info) => { runner.tokenInfo = info; }
           });
         } finally {
           await decrementTasks(projectId);
@@ -622,6 +626,7 @@ export class ControlCenter {
         await startAndMonitorSession(prompt, agentName, project, { 
           shouldStop: () => runner.shouldStop,
           media: options.media,
+          onTokenPicked: (info) => { runner.tokenInfo = info; },
           onSessionCreated: (id) => { runner.sessionId = id; }
         });
         runner.iterations = 1;
@@ -702,9 +707,10 @@ export class ControlCenter {
 
           const result = await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
             shouldStop: () => runner.shouldStop || (Date.now() - startTime > timeoutMs),
+            onTokenPicked: (info) => { runner.tokenInfo = info; },
             onSessionCreated: async (sessionId) => {
               runner.sessionId = sessionId;
-              await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId });
+              await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId, tokenIndex: runner.tokenInfo?.index });
               await createJournalEntry({ sessionId, assignmentId: assignment.id, projectId: project.id, agentName: agent.name, intent });
             }
           });
@@ -767,9 +773,10 @@ export class ControlCenter {
 
         const result = await startAndMonitorSession(prompt, agent.name, currentProject, {
           shouldStop: () => runner.shouldStop,
+          onTokenPicked: (info) => { runner.tokenInfo = info; },
           onSessionCreated: async (id) => {
             runner.sessionId = id;
-            await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId: id });
+            await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId: id, tokenIndex: runner.tokenInfo?.index });
             await createJournalEntry({ sessionId: id, assignmentId: assignment.id, projectId: project.id, agentName: agent.name, intent });
           }
         });
@@ -822,9 +829,10 @@ export class ControlCenter {
       try {
         const result = await startAndMonitorSession(agent.prompt, agent.name, project, {
           shouldStop: () => runner.shouldStop,
+          onTokenPicked: (info) => { runner.tokenInfo = info; },
           onSessionCreated: async (id) => {
             runner.sessionId = id;
-            await recordAgentSessionStart({ assignmentId, projectId: project.id, agentName: agent.name, sessionId: id });
+            await recordAgentSessionStart({ assignmentId, projectId: project.id, agentName: agent.name, sessionId: id, tokenIndex: runner.tokenInfo?.index });
             await createJournalEntry({ sessionId: id, assignmentId, projectId: project.id, agentName: agent.name, intent });
           }
         });
@@ -864,11 +872,9 @@ export class ControlCenter {
 
     const config = await getSiteCheckConfig(projectId);
     if (!config?.enabled) throw new Error(`Site check is disabled for ${projectId}`);
-    if (!config.baseUrl) throw new Error(`site_check_base_url not set for ${projectId}`);
 
     const project = await this.getProjectRuntime(projectId);
     if (!project) throw new Error(`Project ${projectId} not found`);
-    project.siteCheckBaseUrl = config.baseUrl;
 
     const runner = this._createRunner({
       id: runnerId,
@@ -876,13 +882,14 @@ export class ControlCenter {
       type: 'site-check',
       mode: 'loop',
       label: `Site Check — ${projectId} (${config.locale})`,
-      details: { baseUrl: config.baseUrl, pauseMs: config.pauseMs, locale: config.locale },
+      details: { pauseMs: config.pauseMs, locale: config.locale },
     });
 
     runner.promise = runSiteCheckCycle(project, {
       shouldStop: () => runner.shouldStop,
       pauseMs: config.pauseMs,
       locale: config.locale,
+      onTokenPicked: (info) => { runner.tokenInfo = info; }
     }).catch(err => {
       this.log('error', `[SiteCheck][${projectId}] Runner crashed: ${err.message}`);
       this._markRunnerStopped(runner, 'failed', err);
@@ -890,7 +897,7 @@ export class ControlCenter {
       if (runner.status === 'running') this._markRunnerStopped(runner, 'completed');
     });
 
-    this.log('info', `[SiteCheck] Started for ${projectId} → ${config.baseUrl}`);
+    this.log('info', `[SiteCheck] Started for ${projectId}`);
     return runnerId;
   }
 
@@ -914,7 +921,7 @@ export class ControlCenter {
   async startAllSiteChecks() {
     const projects = await listAllProjectsConfig();
     for (const p of projects) {
-      if (p.site_check_enabled && p.site_check_base_url) {
+      if (p.site_check_enabled) {
         try { await this.startSiteCheck(p.id); } catch (err) {
           this.log('warn', `[SiteCheck] Could not auto-start for ${p.id}: ${err.message}`);
         }

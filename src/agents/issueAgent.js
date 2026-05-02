@@ -12,7 +12,7 @@ export function formatIssueInstruction(issue) {
   const securityPrefix = "Tu es un agent 100% autonome. Ta mission est de résoudre l'issue ci-dessous. Règle de sécurité stricte : tu ne dois sous aucun prétexte supprimer le repository ou ses fichiers vitaux. Règle d'exécution : ne pose jamais de questions, ne demande jamais d'avis, prends tes décisions seul. Si tu as un doute, fais un choix par défaut. Une fois le code modifié, vérifie obligatoirement que le projet build et que les tests passent. Si la tâche ne nécessite aucune modification, crée quand même une Pull Request vide ou avec un commentaire l'expliquant. Termine toujours ton travail en créant une Pull Request.";
   return `${securityPrefix}\n\nTitre: ${issue.title}\n\nDescription: ${issue.body || ""}`;
 }
-export async function runIssueAgent(project) {
+export async function runIssueAgent(project, options = {}) {
   while (true) {
     try {
       if (await isProjectLocked(project.id)) {
@@ -30,7 +30,9 @@ export async function runIssueAgent(project) {
           }
           await mergeOpenPRs(project);
           const instruction = formatIssueInstruction(issue);
-          const success = await startAndMonitorSession(instruction, "Issue Agent", project);
+          const success = await startAndMonitorSession(instruction, "Issue Agent", project, {
+            onTokenPicked: options.onTokenPicked
+          });
           // On ferme l'Issue uniquement si Jules a réussi sa tâche
           if (success) {
             log("info", `[${project.id} - Issue] 🔒 Tâche terminée, fermeture de l'Issue #${issue.number}.`);

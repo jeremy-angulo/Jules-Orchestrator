@@ -3,7 +3,7 @@ import app from './app.js';
 import { controlCenter } from './controlCenter.js';
 import { setControlCenterForLogger } from './utils/logger.js';
 import { startWebsiteHealthMonitor } from './services/healthMonitor.js';
-import { initTables } from './db/database.js';
+import { initTables, getAllProjectStates, setActiveTasks } from './db/database.js';
 
 setControlCenterForLogger(controlCenter);
 
@@ -45,7 +45,18 @@ async function main() {
   try {
     await controlCenter.init();
     console.log('ControlCenter initialized.');
+
+    // Reset stale active_tasks left over from a crashed/redeployed process
+    const projectStates = await getAllProjectStates();
+    await Promise.all(projectStates.map(s => setActiveTasks(s.projectId, 0)));
+    console.log(`[Main] Reset active_tasks to 0 for ${projectStates.length} project(s).`);
+
+    await controlCenter.startSchedulers();
+    console.log('Schedulers started.');
+    await controlCenter.startAllAssignments();
+    console.log('Assignments started.');
     await controlCenter.startAllSiteChecks();
+    console.log('Site checks started.');
   } catch (err) {
     console.error('Fatal error while starting ControlCenter:', err);
   }

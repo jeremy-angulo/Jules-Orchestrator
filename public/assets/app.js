@@ -1747,6 +1747,7 @@ function renderAgentLibrary() {
             <span class="muted small"> · ${escapeHtml(runner.projectId)} · ${runner.mode}</span>
           </div>
           <div style="display:flex;gap:6px;align-items:center">
+            ${runner.tokenInfo ? `<span class="chip" style="background:var(--bg-accent);color:var(--text-dim)">${escapeHtml(runner.tokenInfo.label)}</span>` : ''}
             <span class="chip ${runner.status === 'running' ? 'ok' : runner.status === 'failed' ? 'bad' : ''}">${runner.status}</span>
             <button class="btn btn-ghost btn-small" data-action="view-session" data-runner="${runner.id}" ${!runner.sessionId ? 'disabled' : ''}>Session</button>
             <button class="btn btn-ghost btn-small" data-action="stop-runner-agents" data-runner="${runner.id}">Stop</button>
@@ -1821,6 +1822,7 @@ function renderSessions() {
     const displayName = r.label || r.type || 'Jules Agent';
     const shortId = r.sessionId ? r.sessionId.split('/').pop() : '-';
     const julesUrl = r.sessionId ? `https://jules.google.com/session/${shortId}` : null;
+    const keyLabel = r.tokenInfo?.label || '<span class="muted small">—</span>';
 
     tr.innerHTML = `
       <td>
@@ -1830,12 +1832,14 @@ function renderSessions() {
       <td>
         ${julesUrl ? `<a href="${julesUrl}" target="_blank" rel="noopener" class="pr-link mono small">${shortId} ↗</a>` : '<span class="muted small">—</span>'}
       </td>
+      <td>${keyLabel}</td>
       <td><span class="chip ${r.status === 'running' ? 'ok' : r.status === 'failed' ? 'bad' : ''}">${r.status}</span></td>
       <td>${fmtSince(r.startedAt)}</td>
       <td>
         <button class="btn btn-ghost btn-small" data-action="view-session" data-runner="${r.id}" ${!r.sessionId ? 'disabled' : ''}>Logs</button>
       </td>
     `;
+
     el.sessionsRows.appendChild(tr);
   }
 

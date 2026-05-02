@@ -238,6 +238,11 @@ export async function startAndMonitorSession(instruction, agentName, project, op
         await sleep(30000);
         continue;
       }
+
+      if (session._tokenInfo && typeof options.onTokenPicked === 'function') {
+        options.onTokenPicked(session._tokenInfo);
+      }
+
       let sessionName = session.name;
       if (typeof options.onSessionCreated === 'function') {
         options.onSessionCreated(sessionName);

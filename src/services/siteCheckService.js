@@ -164,7 +164,7 @@ Ouvre une Pull Request avec tes modifications de code.
 
 // ── processPage ───────────────────────────────────────────────────────────────
 
-export async function processPage(page, project, locale = 'fr', siteCheckAuth = null) {
+export async function processPage(page, project, locale = 'fr', siteCheckAuth = null, options = {}) {
   const localePath = `/${locale}${page.url === '/' ? '' : page.url}`;
   const folder     = pageToFolder(page.url, locale);
   const screenshotPath = `${folder}/desktop.png`;
@@ -180,6 +180,7 @@ export async function processPage(page, project, locale = 'fr', siteCheckAuth = 
     'Site-Check-Analysis',
     project,
     {
+      onTokenPicked: options.onTokenPicked,
       onPRCreated: ({ prUrl, prNumber }) => { capturedPR = { prUrl, prNumber }; },
     }
   );
@@ -210,14 +211,16 @@ export async function processPage(page, project, locale = 'fr', siteCheckAuth = 
 
   log('info', `[SiteCheck][${project.id}] Lancement agent fix — ${localePath}`);
   await updateSitePageResult(page.id, { status: 'FIX', screenshotPath, issues: null });
-  await startAndMonitorSession(buildFixPrompt(page, folder), 'Site-Check-Fix', project, {});
+  await startAndMonitorSession(buildFixPrompt(page, folder), 'Site-Check-Fix', project, {
+    onTokenPicked: options.onTokenPicked,
+  });
 
   log('info', `[SiteCheck][${project.id}] ✓ Cycle complet pour ${localePath}`);
 }
 
 // ── Runner loop ───────────────────────────────────────────────────────────────
 
-export async function runSiteCheckCycle(project, { shouldStop, pauseMs = 5000, locale = 'fr', siteCheckAuth = null } = {}) {
+export async function runSiteCheckCycle(project, { shouldStop, pauseMs = 5000, locale = 'fr', siteCheckAuth = null, onTokenPicked } = {}) {
   await releaseStaleSitePageLocks(30);
 
   while (true) {
@@ -232,7 +235,7 @@ export async function runSiteCheckCycle(project, { shouldStop, pauseMs = 5000, l
     }
 
     try {
-      await processPage(page, project, locale, siteCheckAuth);
+      await processPage(page, project, locale, siteCheckAuth, { onTokenPicked });
     } catch (err) {
       log('error', `[SiteCheck][${project.id}] Erreur sur ${page.url}: ${err.message}`);
       await unlockSitePage(page.id);

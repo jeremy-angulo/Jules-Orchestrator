@@ -3,7 +3,7 @@ import { sleep } from '../utils/helpers.js';
 import { startAndMonitorSession } from '../api/julesClient.js';
 import { isProjectLocked, incrementTasks, decrementTasks } from '../db/database.js';
 
-export async function runBackgroundAgent(project) {
+export async function runBackgroundAgent(project, options = {}) {
   if (!project.backgroundPrompts || project.backgroundPrompts.length === 0) {
       log("info", `[${project.id}] ℹ️ Aucun prompt background configuré pour ce projet.`);
       return;
@@ -25,7 +25,9 @@ export async function runBackgroundAgent(project) {
         incrementTasks(project.id); // On bloque une place
 
 
-        await startAndMonitorSession(prompt, `Background Agent - ${index}`, project);
+        await startAndMonitorSession(prompt, `Background Agent - ${index}`, project, {
+          onTokenPicked: options.onTokenPicked
+        });
 
         await decrementTasks(project.id); // On libère la place
 
