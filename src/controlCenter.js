@@ -1,7 +1,13 @@
 import cron from 'node-cron';
 import { sleepInterruptible } from './utils/helpers.js';
 import { startAndMonitorSession, getSession, monitorExistingSession } from './api/julesClient.js';
-import { getNextGitHubIssue, closeGitHubIssue, mergeOpenPRs } from './api/githubClient.js';
+import {
+  getNextGitHubIssue,
+  closeGitHubIssue,
+  mergeOpenPRs,
+  listOpenPRs,
+  getPRFiles,
+} from './api/githubClient.js';
 import { formatIssueInstruction } from './agents/issueAgent.js';
 import {
   scheduleBuildAndMergePipeline,
@@ -124,7 +130,53 @@ export class ControlCenter {
   async _autoMergeCycle() {
     for (const project of this.projects) {
       try {
+        // 1. Regular merge of clean PRs
         await mergeOpenPRs(project);
+
+        // 2. Conflict Resolution Pipeline (Puissance de Frappe)
+        const prs = await listOpenPRs(project);
+        const conflictingPRs = prs.filter(pr => pr.mergeable === false && pr.mergeable_state === 'dirty');
+
+        for (const pr of conflictingPRs) {
+          const files = await getPRFiles(project, pr.number);
+          const totalFiles = files.length;
+          
+          // GitHub API doesn't always show which files are in conflict via /files, 
+          // but we can look for markers or simply trust Jules to handle it if we're under the 50% threshold.
+          // For now, we use the "total files" as a safety metric. If a PR touches too many files, we skip auto-fix.
+          if (totalFiles > 20) {
+            this.log('warn', `[ConflictFix] PR #${pr.number} has too many files (${totalFiles}) for auto-fix. skipping.`);
+            continue;
+          }
+
+          this.log('info', `[ConflictFix] Attempting auto-fix for PR #${pr.number} (${totalFiles} files)`);
+
+          const resolvePrompt = `
+# Mission : Résolution de conflits de merge — PR #${pr.number}
+
+Cette PR a des conflits avec la branche cible \`${pr.base.ref}\`. 
+Ta mission est de résoudre ces conflits proprement et de pusher le résultat.
+
+## Stratégie de résolution :
+1. **Screenshots** : Pour tous les fichiers dans \`agent-screenshots/\` ou \`screenshots/\`, utilise TOUJOURS la version de la branche source (la tienne) : \`git checkout --theirs <file>\`.
+2. **Code** : Pour les fichiers source (\`.ts\`, \`.tsx\`, \`.js\`), résous les conflits intelligemment en gardant la logique fonctionnelle.
+3. **Validation** : Vérifie que le projet build toujours (\`npm run build\` ou \`npx tsc\`).
+
+## Instructions :
+- \`git fetch origin ${pr.base.ref}\`
+- \`git merge origin/${pr.base.ref}\`
+- Résous les conflits.
+- \`git add .\`
+- \`git commit -m "chore: resolve merge conflicts with ${pr.base.ref}"\`
+- \`git push origin ${pr.head.ref}\`
+`;
+
+          await startAndMonitorSession(resolvePrompt, `Conflict-Fix-PR-${pr.number}`, project, {
+            onTokenPicked: (info) => {
+              this.log('info', `[ConflictFix] Agent dispatched using token: ${info.label}`);
+            }
+          });
+        }
       } catch (err) {
         this.log('error', `Auto-merge failed for project ${project.id}`, { error: err.message });
       }

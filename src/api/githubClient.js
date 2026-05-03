@@ -254,6 +254,18 @@ export async function mergePRWithResult(project, prNumber) {
   }
 }
 
+export async function getPRFiles(project, prNumber) {
+  try {
+    const res = await githubRequest(project,
+      `https://api.github.com/repos/${project.githubRepo}/pulls/${prNumber}/files?per_page=100`,
+      { headers: { 'Authorization': `Bearer ${project.githubToken}`, 'Accept': 'application/vnd.github.v3+json' } },
+      'get_pr_files'
+    );
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (e) { return []; }
+}
+
 export async function mergeOpenPRs(project) {
   try {
     const res = await githubRequest(project, `https://api.github.com/repos/${project.githubRepo}/pulls?state=open&sort=created&direction=asc`, {
