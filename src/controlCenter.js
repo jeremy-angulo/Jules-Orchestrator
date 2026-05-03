@@ -543,7 +543,6 @@ export class ControlCenter {
             this.log('error', '[ControlCenter] getStatus() returned null/undefined');
             return;
           }
-          pruneOldData; // already scheduled separately
           await Promise.all([
             recordDashboardMetric('active_runners', (status.runners || []).length),
             recordDashboardMetric('active_tasks', (status.projects || []).reduce((s, p) => s + (p.activeTasks || 0), 0)),
@@ -587,9 +586,9 @@ export class ControlCenter {
       this.systemRunners.perProjectPipelines.set(project.id, task);
       this.log('info', 'Project pipeline scheduler started', { projectId: project.id });
     }
-    }
+  }
 
-    async _cleanupStaleSessions() {
+  async _cleanupStaleSessions() {
     const STALE_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
     const cutoff = Date.now() - STALE_AGE_MS;
 
@@ -601,10 +600,10 @@ export class ControlCenter {
       if (s.started_at < cutoff) {
         this.log('warn', `[Cleanup] Marking stale session ${s.session_id} as failed (started ${new Date(s.started_at).toISOString()})`);
         await recordAgentSessionEnd(s.session_id, 'failed');
-        // If it was a Site Check runner, the atomic lock will be released by releaseStaleSitePageLocks
       }
     }
-    }
+  }
+
   async stopSchedulers() {
     if (this.systemRunners.autoMergeService) {
       clearInterval(this.systemRunners.autoMergeService);
@@ -614,8 +613,15 @@ export class ControlCenter {
       task.stop();
       this.systemRunners.perProjectPipelines.delete(projectId);
     }
+    if (this.systemRunners.staleCleanup) {
+      clearInterval(this.systemRunners.staleCleanup);
+      this.systemRunners.staleCleanup = null;
+    }
+    if (this.systemRunners.dbPruner) {
+      clearInterval(this.systemRunners.dbPruner);
+      this.systemRunners.dbPruner = null;
+    }
   }
-
   async startAll() {
     await this.init();
     await this.startSchedulers();
