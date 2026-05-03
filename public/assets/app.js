@@ -758,7 +758,7 @@ function renderPipelinesTab(container, project) {
         <div>
           <div style="display:flex;align-items:center;gap:8px">
             <strong>Build & Test Pipeline</strong>
-            <span class="chip ${project.buildPipelineEnabled ? 'ok' : ''}">${project.buildPipelineEnabled ? 'ENABLED' : 'DISABLED'}</span>
+            <span class="chip clickable ${project.buildPipelineEnabled ? 'ok' : ''}" data-action="toggle-pipeline" data-project="${project.id}">${project.buildPipelineEnabled ? 'ENABLED' : 'DISABLED'}</span>
           </div>
           <p class="muted small">
             ${project.hasPipeline ? (project.buildAndMergePipeline?.cronSchedule ? `Schedule: <span class="mono">${escapeHtml(project.buildAndMergePipeline.cronSchedule)}</span>` : 'Manual Trigger Only') : 'No agent instructions configured'}
@@ -778,7 +778,7 @@ function renderPipelinesTab(container, project) {
         <div>
           <div style="display:flex;align-items:center;gap:8px">
             <strong>Batch Conflict Resolver</strong>
-            <span class="chip ${project.conflictResolverEnabled ? 'ok' : ''}">${project.conflictResolverEnabled ? 'ENABLED' : 'DISABLED'}</span>
+            <span class="chip clickable ${project.conflictResolverEnabled ? 'ok' : ''}" data-action="toggle-conflict-resolver" data-project="${project.id}">${project.conflictResolverEnabled ? 'ENABLED' : 'DISABLED'}</span>
           </div>
           <p class="muted small">
             Schedule: <span class="mono">${escapeHtml(project.conflictResolverCron || '0 18 * * *')}</span>
@@ -1554,6 +1554,24 @@ async function handleDetailClick(e) {
     } else if (action === 'run-conflict-resolver') {
       await apiPost(`/api/projects/${projectId}/batch-conflict/run`, null, true);
       showToast('Conflict resolver started');
+    } else if (action === 'toggle-pipeline') {
+      const p = await apiGet('/api/projects/config').then(d => (d.projects || []).find(x => x.id === projectId));
+      if (!p) return;
+      const newState = !p.build_pipeline_enabled;
+      if (!confirm(`Turn ${newState ? 'ON' : 'OFF'} the Build & Test Pipeline for ${projectId}?`)) return;
+      await apiPost('/api/projects/config', { ...p, build_pipeline_enabled: newState ? 1 : 0 });
+      showToast(`Pipeline ${newState ? 'enabled' : 'disabled'}`);
+      await refreshDashboard();
+      if (state.selectedProjectDetail === projectId) await fetchProjectDetail(projectId);
+    } else if (action === 'toggle-conflict-resolver') {
+      const p = await apiGet('/api/projects/config').then(d => (d.projects || []).find(x => x.id === projectId));
+      if (!p) return;
+      const newState = !p.conflict_resolver_enabled;
+      if (!confirm(`Turn ${newState ? 'ON' : 'OFF'} the Batch Conflict Resolver for ${projectId}?`)) return;
+      await apiPost('/api/projects/config', { ...p, conflict_resolver_enabled: newState ? 1 : 0 });
+      showToast(`Conflict resolver ${newState ? 'enabled' : 'disabled'}`);
+      await refreshDashboard();
+      if (state.selectedProjectDetail === projectId) await fetchProjectDetail(projectId);
     } else if (action === 'run-agent-once') {
       openRunAgentModal(projectId);
       setLoading(btn, false);
