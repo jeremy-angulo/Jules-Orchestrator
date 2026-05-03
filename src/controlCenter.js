@@ -129,6 +129,10 @@ export class ControlCenter {
 
   async _batchConflictResolutionCycle() {
     this.log('info', '[BatchConflict] Starting daily scan for dirty PRs...');
+    
+    // Refresh project list from DB to ensure new projects (like Jules-Orchestrator itself) are seen
+    await this.init();
+
     const allConflictingPRs = [];
     
     // Master token from Jules-Orchestrator to use if a project has no token
@@ -142,7 +146,7 @@ export class ControlCenter {
         const prs = await listOpenPRs(scanProject);
         const dirty = prs.filter(pr => pr.mergeable === false && pr.mergeable_state === 'dirty');
         if (dirty.length > 0) {
-          allConflictingPRs.push({ project, prs: dirty });
+          allConflictingPRs.push({ project: scanProject, prs: dirty });
         }
       } catch (err) {
         this.log('error', `[BatchConflict] Failed to scan project ${project.id}`, { error: err.message });
@@ -158,7 +162,7 @@ export class ControlCenter {
 
     this.log('info', `[BatchConflict] Found ${totalConflicts} conflicts across ${allConflictingPRs.length} projects. Dispatching Jules agent on Jules-Orchestrator...`);
 
-    // Fallback: use the first available project if Jules-Orchestrator isn't configured
+    // Use Jules-Orchestrator to run the maintenance session
     const resolverProject = masterProject || this.projects[0];
     if (!resolverProject) {
       this.log('error', '[BatchConflict] No project available to dispatch agent.');
@@ -207,55 +211,15 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
   }
 
   async _autoMergeCycle() {
+    // Master token from Jules-Orchestrator for fallback
+    const masterProject = this.projects.find(p => p.id === 'Jules-Orchestrator');
+    const masterToken = masterProject?.githubToken;
+
     for (const project of this.projects) {
       try {
-        // 1. Regular merge of clean PRs
-        await mergeOpenPRs(project);
-
-        // 2. Conflict Resolution Pipeline (Puissance de Frappe)
-        const prs = await listOpenPRs(project);
-        const conflictingPRs = prs.filter(pr => pr.mergeable === false && pr.mergeable_state === 'dirty');
-
-        for (const pr of conflictingPRs) {
-          const files = await getPRFiles(project, pr.number);
-          const totalFiles = files.length;
-          
-          // GitHub API doesn't always show which files are in conflict via /files, 
-          // but we can look for markers or simply trust Jules to handle it if we're under the 50% threshold.
-          // For now, we use the "total files" as a safety metric. If a PR touches too many files, we skip auto-fix.
-          if (totalFiles > 20) {
-            this.log('warn', `[ConflictFix] PR #${pr.number} has too many files (${totalFiles}) for auto-fix. skipping.`);
-            continue;
-          }
-
-          this.log('info', `[ConflictFix] Attempting auto-fix for PR #${pr.number} (${totalFiles} files)`);
-
-          const resolvePrompt = `
-# Mission : Résolution de conflits de merge — PR #${pr.number}
-
-Cette PR a des conflits avec la branche cible \`${pr.base.ref}\`. 
-Ta mission est de résoudre ces conflits proprement et de pusher le résultat.
-
-## Stratégie de résolution :
-1. **Screenshots** : Pour tous les fichiers dans \`agent-screenshots/\` ou \`screenshots/\`, utilise TOUJOURS la version de la branche source (la tienne) : \`git checkout --theirs <file>\`.
-2. **Code** : Pour les fichiers source (\`.ts\`, \`.tsx\`, \`.js\`), résous les conflits intelligemment en gardant la logique fonctionnelle.
-3. **Validation** : Vérifie que le projet build toujours (\`npm run build\` ou \`npx tsc\`).
-
-## Instructions :
-- \`git fetch origin ${pr.base.ref}\`
-- \`git merge origin/${pr.base.ref}\`
-- Résous les conflits.
-- \`git add .\`
-- \`git commit -m "chore: resolve merge conflicts with ${pr.base.ref}"\`
-- \`git push origin ${pr.head.ref}\`
-`;
-
-          await startAndMonitorSession(resolvePrompt, `Conflict-Fix-PR-${pr.number}`, project, {
-            onTokenPicked: (info) => {
-              this.log('info', `[ConflictFix] Agent dispatched using token: ${info.label}`);
-            }
-          });
-        }
+        const runtimeProject = { ...project, githubToken: project.githubToken || masterToken };
+        // Regular merge of clean PRs
+        await mergeOpenPRs(runtimeProject);
       } catch (err) {
         this.log('error', `Auto-merge failed for project ${project.id}`, { error: err.message });
       }
