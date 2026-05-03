@@ -5,8 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "test": "node --test tests/*.test.js",
-    "test:screenshots": "node tests/screenshot-pages.test.js"
+    "test": "node --test tests/*.test.js"
   },
   "dependencies": {
     "@libsql/client": "^0.17.3",
