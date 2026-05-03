@@ -35,10 +35,10 @@ router.get('/', apiRateLimiter, requirePermission('dashboard.read'), async (req,
 router.post('/toggle', apiRateLimiter, requirePermission('agents.control'), async (req, res) => {
   try {
     const { projectId } = req.params;
-    const { enabled, baseUrl, pauseMs, locale } = req.body || {};
+    const { enabled, baseUrl, pauseMs, locale, concurrency } = req.body || {};
 
-    await controlCenter.toggleSiteCheck(projectId, !!enabled, baseUrl, pauseMs ?? 5000, locale ?? 'fr');
-    await audit(req, 'site_check.toggle', projectId, { enabled, baseUrl });
+    await controlCenter.toggleSiteCheck(projectId, !!enabled, baseUrl, pauseMs ?? 5000, locale ?? 'fr', concurrency ?? 1);
+    await audit(req, 'site_check.toggle', projectId, { enabled, baseUrl, concurrency });
 
     const [config, stats] = await Promise.all([
       getSiteCheckConfig(projectId),

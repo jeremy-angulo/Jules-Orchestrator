@@ -213,6 +213,11 @@ export async function initTables() {
     "ALTER TABLE token_names ADD COLUMN created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')*1000)",
     "ALTER TABLE project_states ADD COLUMN locked_at INTEGER",
     "ALTER TABLE project_states ADD COLUMN lock_reason TEXT",
+    "ALTER TABLE projects_config ADD COLUMN site_check_enabled BOOLEAN NOT NULL DEFAULT 0",
+    "ALTER TABLE projects_config ADD COLUMN site_check_base_url TEXT",
+    "ALTER TABLE projects_config ADD COLUMN site_check_pause_ms INTEGER NOT NULL DEFAULT 5000",
+    "ALTER TABLE projects_config ADD COLUMN site_check_locale TEXT NOT NULL DEFAULT 'fr'",
+    "ALTER TABLE projects_config ADD COLUMN site_check_concurrency INTEGER NOT NULL DEFAULT 1",
     "ALTER TABLE site_pages ADD COLUMN screenshot_path TEXT",
     "ALTER TABLE site_pages ADD COLUMN issues JSON",
     "ALTER TABLE site_pages ADD COLUMN requires_auth BOOLEAN DEFAULT 0",
@@ -393,19 +398,29 @@ export async function getSiteCheckConfig(projectId) {
   if (!row) return null;
   return {
     enabled: !!row.site_check_enabled,
-    baseUrl: row.site_check_base_url || null,
+    baseUrl: row.site_check_base_url || '',
     pauseMs: Number(row.site_check_pause_ms || 5000),
     locale: row.site_check_locale || 'fr',
-  };
-}
+    concurrency: Number(row.site_check_concurrency || 1),
+    };
+    }
 
-export async function updateSiteCheckConfig(projectId, { enabled, baseUrl, pauseMs, locale }) {
+
+export async function updateSiteCheckConfig(projectId, { enabled, baseUrl, pauseMs, locale, concurrency }) {
   await executeWithRetry({
     sql: `UPDATE projects_config
           SET site_check_enabled = ?, site_check_base_url = ?, site_check_pause_ms = ?,
-              site_check_locale = ?, updated_at = ?
+              site_check_locale = ?, site_check_concurrency = ?, updated_at = ?
           WHERE id = ?`,
-    args: [enabled ? 1 : 0, baseUrl ?? null, pauseMs ?? 5000, locale ?? 'fr', Date.now(), projectId],
+    args: [
+      enabled ? 1 : 0,
+      baseUrl ?? null,
+      pauseMs ?? 5000,
+      locale ?? 'fr',
+      concurrency ?? 1,
+      Date.now(),
+      projectId
+    ],
   });
 }
 

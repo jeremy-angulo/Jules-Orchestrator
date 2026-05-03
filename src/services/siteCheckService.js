@@ -220,14 +220,14 @@ export async function processPage(page, project, locale = 'fr', siteCheckAuth = 
 
 // ── Runner loop ───────────────────────────────────────────────────────────────
 
-export async function runSiteCheckCycle(project, { shouldStop, pauseMs = 5000, locale = 'fr', siteCheckAuth = null, onTokenPicked } = {}) {
+export async function runSiteCheckCycle(project, { shouldStop, pauseMs = 5000, locale = 'fr', siteCheckAuth = null, onTokenPicked, runnerId = 'site-check-runner' } = {}) {
   await releaseStaleSitePageLocks(30);
 
   while (true) {
     if (shouldStop?.()) break;
 
-    // Atomic pick+lock: safe for 15 concurrent runners on the same project
-    const page = await pickAndLockSitePage(project.id, AGENT_ID);
+    // Atomic pick+lock: safe for many concurrent runners on the same project
+    const page = await pickAndLockSitePage(project.id, runnerId);
     if (!page) {
       log('info', `[SiteCheck][${project.id}] Cycle complet (locale=${locale}) — reprise dans 60s`);
       await new Promise(r => setTimeout(r, 60_000));

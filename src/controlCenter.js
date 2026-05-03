@@ -872,55 +872,71 @@ export class ControlCenter {
   // ── Site Check ────────────────────────────────────────────────────────────
 
   isSiteCheckRunning(projectId) {
-    return this.runners.has(`site-check:${projectId}`);
+    return Array.from(this.runners.keys()).some(k => k.startsWith(`site-check:${projectId}:`));
   }
 
   async startSiteCheck(projectId) {
-    const runnerId = `site-check:${projectId}`;
-    if (this.runners.has(runnerId)) return runnerId;
-
     const config = await getSiteCheckConfig(projectId);
     if (!config?.enabled) throw new Error(`Site check is disabled for ${projectId}`);
 
     const project = await this.getProjectRuntime(projectId);
     if (!project) throw new Error(`Project ${projectId} not found`);
 
-    const runner = this._createRunner({
-      id: runnerId,
-      projectId,
-      type: 'site-check',
-      mode: 'loop',
-      label: `Site Check — ${projectId} (${config.locale})`,
-      details: { pauseMs: config.pauseMs, locale: config.locale },
-    });
+    const concurrency = config.concurrency || 1;
+    const runnerIds = [];
 
-    runner.promise = runSiteCheckCycle(project, {
-      shouldStop: () => runner.shouldStop,
-      pauseMs: config.pauseMs,
-      locale: config.locale,
-      onTokenPicked: (info) => { runner.tokenInfo = info; }
-    }).catch(err => {
-      this.log('error', `[SiteCheck][${projectId}] Runner crashed: ${err.message}`);
-      this._markRunnerStopped(runner, 'failed', err);
-    }).then(() => {
-      if (runner.status === 'running') this._markRunnerStopped(runner, 'completed');
-    });
+    for (let i = 0; i < concurrency; i++) {
+      const runnerId = `site-check:${projectId}:${i}`;
+      if (this.runners.has(runnerId)) {
+        runnerIds.push(runnerId);
+        continue;
+      }
 
-    this.log('info', `[SiteCheck] Started for ${projectId}`);
-    return runnerId;
+      const runner = this._createRunner({
+        id: runnerId,
+        projectId,
+        type: 'site-check',
+        mode: 'loop',
+        label: `Site Check — ${projectId} [${i}] (${config.locale})`,
+        details: { pauseMs: config.pauseMs, locale: config.locale, index: i },
+      });
+
+      runner.promise = runSiteCheckCycle(project, {
+        runnerId,
+        shouldStop: () => runner.shouldStop,
+        pauseMs: config.pauseMs,
+        locale: config.locale,
+        onTokenPicked: (info) => { runner.tokenInfo = info; }
+      }).catch(err => {
+        this.log('error', `[SiteCheck][${projectId}][${i}] Runner crashed: ${err.message}`);
+        this._markRunnerStopped(runner, 'failed', err);
+      }).then(() => {
+        if (runner.status === 'running') this._markRunnerStopped(runner, 'completed');
+      });
+
+      runnerIds.push(runnerId);
+    }
+
+    this.log('info', `[SiteCheck] Started ${concurrency} runners for ${projectId}`);
+    return runnerIds;
   }
 
   async stopSiteCheck(projectId) {
-    const runner = this.runners.get(`site-check:${projectId}`);
-    if (!runner) return;
-    runner.shouldStop = true;
-    this._markRunnerStopped(runner, 'stopped');
-    this.log('info', `[SiteCheck] Stopped for ${projectId}`);
+    const runners = Array.from(this.runners.values()).filter(r => r.id.startsWith(`site-check:${projectId}:`));
+    for (const runner of runners) {
+      runner.shouldStop = true;
+      this._markRunnerStopped(runner, 'stopped');
+    }
+    if (runners.length > 0) {
+      this.log('info', `[SiteCheck] Stopped all runners for ${projectId}`);
+    }
   }
 
-  async toggleSiteCheck(projectId, enabled, baseUrl, pauseMs, locale = 'fr') {
-    await updateSiteCheckConfig(projectId, { enabled, baseUrl, pauseMs, locale });
+  async toggleSiteCheck(projectId, enabled, baseUrl, pauseMs, locale = 'fr', concurrency = 1) {
+    await updateSiteCheckConfig(projectId, { enabled, baseUrl, pauseMs, locale, concurrency });
     if (enabled) {
+      // First stop any existing runners to refresh concurrency
+      await this.stopSiteCheck(projectId);
       await this.startSiteCheck(projectId);
     } else {
       await this.stopSiteCheck(projectId);
