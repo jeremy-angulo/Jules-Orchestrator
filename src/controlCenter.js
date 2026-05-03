@@ -158,8 +158,10 @@ export class ControlCenter {
 
     this.log('info', `[BatchConflict] Found ${totalConflicts} conflicts across ${allConflictingPRs.length} projects. Dispatching Jules agent on Jules-Orchestrator...`);
 
-    if (!masterProject) {
-      this.log('error', '[BatchConflict] Project Jules-Orchestrator not found in runtime. Cannot dispatch agent.');
+    // Fallback: use the first available project if Jules-Orchestrator isn't configured
+    const resolverProject = masterProject || this.projects[0];
+    if (!resolverProject) {
+      this.log('error', '[BatchConflict] No project available to dispatch agent.');
       return;
     }
 
@@ -197,7 +199,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
 À la fin de ta session, fournis un court résumé des PRs réparées et de celles abandonnées (avec la raison).
 `;
 
-    await startAndMonitorSession(batchPrompt, 'Batch-Conflict-Resolver', masterProject, {
+    await startAndMonitorSession(batchPrompt, 'Batch-Conflict-Resolver', resolverProject, {
       onTokenPicked: (info) => {
         this.log('info', `[BatchConflict] Agent dispatched using token: ${info.label}`);
       }
