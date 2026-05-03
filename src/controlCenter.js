@@ -572,25 +572,6 @@ export class ControlCenter {
       this.systemRunners.staleCleanup = setInterval(() => this._cleanupStaleSessions(), 60 * 60 * 1000);
       this._cleanupStaleSessions().catch(() => {});
     }
-    }
-
-    async _cleanupStaleSessions() {
-    const STALE_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
-    const cutoff = Date.now() - STALE_AGE_MS;
-
-    // We'll mark them as failed in the DB so runners can move on
-    const { recordAgentSessionEnd } = await import('./db/database.js');
-    const { getAgentSessionsByStatus } = await import('./db/database.js');
-
-    const running = await getAgentSessionsByStatus('running');
-    for (const s of running) {
-      if (s.started_at < cutoff) {
-        this.log('warn', `[Cleanup] Marking stale session ${s.session_id} as failed (started ${new Date(s.started_at).toISOString()})`);
-        await recordAgentSessionEnd(s.session_id, 'failed');
-        // If it was a Site Check runner, the atomic lock will be released by releaseStaleSitePageLocks
-      }
-    }
-    }
 
     // DB pruning — delete rows older than 7 days from high-volume tables (every 6h)
     if (!this.systemRunners.dbPruner) {
@@ -606,8 +587,24 @@ export class ControlCenter {
       this.systemRunners.perProjectPipelines.set(project.id, task);
       this.log('info', 'Project pipeline scheduler started', { projectId: project.id });
     }
-  }
+    }
 
+    async _cleanupStaleSessions() {
+    const STALE_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
+    const cutoff = Date.now() - STALE_AGE_MS;
+
+    // We'll mark them as failed in the DB so runners can move on
+    const { recordAgentSessionEnd, getAgentSessionsByStatus } = await import('./db/database.js');
+
+    const running = await getAgentSessionsByStatus('running');
+    for (const s of running) {
+      if (s.started_at < cutoff) {
+        this.log('warn', `[Cleanup] Marking stale session ${s.session_id} as failed (started ${new Date(s.started_at).toISOString()})`);
+        await recordAgentSessionEnd(s.session_id, 'failed');
+        // If it was a Site Check runner, the atomic lock will be released by releaseStaleSitePageLocks
+      }
+    }
+    }
   async stopSchedulers() {
     if (this.systemRunners.autoMergeService) {
       clearInterval(this.systemRunners.autoMergeService);

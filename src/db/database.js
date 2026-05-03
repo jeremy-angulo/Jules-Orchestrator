@@ -45,7 +45,7 @@ function invalidateAssignmentCache(projectId) {
   assignmentListCache.delete('all');
 }
 
-async function executeWithRetry(stmt, retries = 10, delay = 1000) {
+export async function executeWithRetry(stmt, retries = 10, delay = 1000) {
   const normalizedStmt = typeof stmt === 'string' ? stmt : {
     ...stmt,
     args: stmt.args ? stmt.args.map(a => a === undefined ? null : a) : []
@@ -129,6 +129,11 @@ export async function initTables() {
       pipeline_source_branch TEXT,
       pipeline_target_branch TEXT,
       pipeline_prompt TEXT,
+      site_check_enabled BOOLEAN NOT NULL DEFAULT 0,
+      site_check_base_url TEXT,
+      site_check_pause_ms INTEGER NOT NULL DEFAULT 5000,
+      site_check_locale TEXT NOT NULL DEFAULT 'fr',
+      site_check_concurrency INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )`,
@@ -198,6 +203,24 @@ export async function initTables() {
       started_at INTEGER NOT NULL,
       ended_at INTEGER,
       metadata JSON
+    )`,
+    `CREATE TABLE IF NOT EXISTS site_pages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id TEXT NOT NULL,
+      url TEXT NOT NULL,
+      group_name TEXT,
+      priority INTEGER DEFAULT 0,
+      last_screenshot_at TEXT,
+      last_analysis_at TEXT,
+      locked_by TEXT,
+      locked_at TEXT,
+      status TEXT NOT NULL DEFAULT 'ANALYZE',
+      screenshot_path TEXT,
+      issues JSON,
+      requires_auth BOOLEAN DEFAULT 0,
+      requires_admin BOOLEAN DEFAULT 0,
+      is_wizard BOOLEAN DEFAULT 0,
+      FOREIGN KEY (project_id) REFERENCES projects_config(id) ON DELETE CASCADE
     )`
   ], "write");
 
@@ -391,7 +414,7 @@ export async function deleteDashboardUser(id) {
 
 export async function getSiteCheckConfig(projectId) {
   const rs = await executeWithRetry({
-    sql: 'SELECT site_check_enabled, site_check_base_url, site_check_pause_ms, site_check_locale FROM projects_config WHERE id = ?',
+    sql: 'SELECT site_check_enabled, site_check_base_url, site_check_pause_ms, site_check_locale, site_check_concurrency FROM projects_config WHERE id = ?',
     args: [projectId],
   });
   const row = rs.rows[0];
@@ -402,8 +425,8 @@ export async function getSiteCheckConfig(projectId) {
     pauseMs: Number(row.site_check_pause_ms || 5000),
     locale: row.site_check_locale || 'fr',
     concurrency: Number(row.site_check_concurrency || 1),
-    };
-    }
+  };
+}
 
 
 export async function updateSiteCheckConfig(projectId, { enabled, baseUrl, pauseMs, locale, concurrency }) {
@@ -432,7 +455,7 @@ export async function pickAndLockSitePage(projectId, agentId) {
           SET locked_by = ?, locked_at = datetime('now')
           WHERE id = (
             SELECT id FROM site_pages
-            WHERE project_id = ? AND locked_by IS NULL
+            WHERE project_id = ? AND locked_by IS NULL AND status = 'ANALYZE'
             ORDER BY last_screenshot_at ASC NULLS FIRST, priority ASC
             LIMIT 1
           )
@@ -597,7 +620,36 @@ export async function getProjectConfig(id) {
   return rs.rows[0];
 }
 export async function upsertProjectConfig(p) {
-  await executeWithRetry({ sql: 'INSERT INTO projects_config (id, github_repo, github_branch, github_token, pipeline_cron, pipeline_source_branch, pipeline_target_branch, pipeline_prompt, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET github_repo=excluded.github_repo, github_branch=excluded.github_branch, updated_at=excluded.updated_at', args: [p.id, p.github_repo, p.github_branch || 'main', p.github_token, p.pipeline_cron, p.pipeline_source_branch, p.pipeline_target_branch, p.pipeline_prompt, Date.now(), Date.now()] });
+  await executeWithRetry({
+    sql: `INSERT INTO projects_config (
+            id, github_repo, github_branch, github_token, pipeline_cron,
+            pipeline_source_branch, pipeline_target_branch, pipeline_prompt,
+            site_check_enabled, site_check_base_url, site_check_pause_ms,
+            site_check_locale, site_check_concurrency,
+            created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            github_repo=excluded.github_repo,
+            github_branch=excluded.github_branch,
+            github_token=excluded.github_token,
+            pipeline_cron=excluded.pipeline_cron,
+            pipeline_source_branch=excluded.pipeline_source_branch,
+            pipeline_target_branch=excluded.pipeline_target_branch,
+            pipeline_prompt=excluded.pipeline_prompt,
+            site_check_enabled=excluded.site_check_enabled,
+            site_check_base_url=excluded.site_check_base_url,
+            site_check_pause_ms=excluded.site_check_pause_ms,
+            site_check_locale=excluded.site_check_locale,
+            site_check_concurrency=excluded.site_check_concurrency,
+            updated_at=excluded.updated_at`,
+    args: [
+      p.id, p.github_repo, p.github_branch || 'main', p.github_token, p.pipeline_cron,
+      p.pipeline_source_branch, p.pipeline_target_branch, p.pipeline_prompt,
+      p.site_check_enabled ? 1 : 0, p.site_check_base_url || null, p.site_check_pause_ms || 5000,
+      p.site_check_locale || 'fr', p.site_check_concurrency || 1,
+      Date.now(), Date.now()
+    ]
+  });
   invalidateProjectConfigCache(p.id);
 }
 export async function deleteProjectConfig(id) {
