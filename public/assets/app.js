@@ -786,6 +786,7 @@ function renderPipelinesTab(container, project) {
         </div>
         <div style="display:flex;gap:8px;align-items:center">
            <button class="btn btn-ghost btn-small" id="editConflictResolverBtn">Configure</button>
+           <button class="btn btn-secondary btn-small" data-action="run-conflict-resolver" data-project="${project.id}">Run Now</button>
         </div>
       </div>
     </div>
@@ -1550,6 +1551,9 @@ async function handleDetailClick(e) {
     } else if (action === 'run-pipeline') {
       await apiPost(`/api/projects/${projectId}/pipeline/run`, null, true);
       showToast('Pipeline started');
+    } else if (action === 'run-conflict-resolver') {
+      await apiPost(`/api/projects/${projectId}/batch-conflict/run`, null, true);
+      showToast('Conflict resolver started');
     } else if (action === 'run-agent-once') {
       openRunAgentModal(projectId);
       setLoading(btn, false);
@@ -1660,7 +1664,7 @@ async function savePipeline() {
 function openConflictResolverModal(projectId, cron, enabled) {
   const modal = document.querySelector('#conflictResolverModal');
   document.querySelector('#conflictResolverModalProjectId').value = projectId;
-  document.querySelector('#conflictResolverModalEnabled').checked = !!enabled;
+  document.querySelector('#conflictResolverModalEnabled').checked = Boolean(enabled);
   
   setCronBuilderFromExpr('#conflictResolverCronBuilder', '#conflictResolverCronExpr', cron || '0 18 * * *');
   modal.classList.add('show');

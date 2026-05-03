@@ -299,4 +299,15 @@ router.post('/:projectId/pipeline/run', apiRateLimiter, requirePermission('pipel
     }
 });
 
+router.post('/:projectId/batch-conflict/run', apiRateLimiter, requirePermission('pipelines.run'), async (req, res) => {
+    const { projectId } = req.params;
+    try {
+        const runnerId = await controlCenter.runBatchConflictNow(projectId);
+        await audit(req, 'batch-conflict.run', projectId, { runnerId });
+        res.status(202).json({ ok: true, runnerId });
+    } catch (err) {
+        res.status(500).json({ error: String(err.message) });
+    }
+});
+
 export default router;

@@ -560,6 +560,35 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
     return runnerId;
   }
 
+  async runBatchConflictNow(projectId) {
+    const project = await this.getProjectRuntime(projectId);
+    if (!project) {
+      throw new Error(`Unknown project: ${projectId}`);
+    }
+
+    const runnerId = this.makeRunnerId(projectId, 'manual-conflict', Date.now().toString());
+    const runner = this._createRunner({
+      id: runnerId,
+      projectId,
+      type: 'manual-conflict',
+      mode: 'once',
+      label: 'Batch Conflict Resolution (manual)'
+    });
+    runner.keepInRegistryAfterStop = true;
+
+    runner.promise = (async () => {
+      try {
+        await this._batchConflictResolutionCycle(projectId);
+        runner.iterations = 1;
+        this._markRunnerStopped(runner, 'completed');
+      } catch (err) {
+        this._markRunnerStopped(runner, 'failed', err);
+      }
+    })();
+
+    return runnerId;
+  }
+
   async startCustomLoop(projectId, prompt, label = 'Custom Loop', intervalMs = 120000, options = {}) {
     const project = await this.getProjectRuntime(projectId);
     if (!project) {
