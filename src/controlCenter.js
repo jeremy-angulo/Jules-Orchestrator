@@ -217,6 +217,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
     const masterToken = masterProject?.githubToken;
 
     for (const project of this.projects) {
+      if (!project.conflictResolverEnabled) continue;
       try {
         const runtimeProject = { ...project, githubToken: project.githubToken || masterToken };
         // Regular merge of clean PRs
