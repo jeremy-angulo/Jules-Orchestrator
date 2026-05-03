@@ -689,6 +689,10 @@ export async function recordAgentSessionStart({ assignmentId, projectId, agentNa
 export async function recordAgentSessionEnd(sid, status) {
   await executeWithRetry({ sql: 'UPDATE agent_sessions SET status = ?, ended_at = ? WHERE session_id = ?', args: [status, Date.now(), sid] });
 }
+export async function getAgentSessionsByStatus(status) {
+  const rs = await executeWithRetry({ sql: 'SELECT * FROM agent_sessions WHERE status = ?', args: [status] });
+  return rs.rows;
+}
 export async function listAgentSessions(pid) {
   const rs = await executeWithRetry({ sql: 'SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY started_at DESC LIMIT 50', args: [pid] });
   return rs.rows;
