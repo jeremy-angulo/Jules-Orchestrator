@@ -22,7 +22,7 @@ export async function runBackgroundAgent(project, options = {}) {
         }
 
 
-        incrementTasks(project.id); // On bloque une place
+        await incrementTasks(project.id); // On bloque une place
 
 
         await startAndMonitorSession(prompt, `Background Agent - ${index}`, project, {

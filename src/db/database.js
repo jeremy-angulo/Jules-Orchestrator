@@ -670,15 +670,19 @@ export async function updateProjectAutomation(projectId, {
 }) {
   await executeWithRetry({
     sql: `UPDATE projects_config
-          SET build_pipeline_enabled = ?, pipeline_cron = ?, pipeline_prompt = ?,
-              conflict_resolver_enabled = ?, conflict_resolver_cron = ?, updated_at = ?
+          SET build_pipeline_enabled = COALESCE(?, build_pipeline_enabled),
+              pipeline_cron = COALESCE(?, pipeline_cron),
+              pipeline_prompt = COALESCE(?, pipeline_prompt),
+              conflict_resolver_enabled = COALESCE(?, conflict_resolver_enabled),
+              conflict_resolver_cron = COALESCE(?, conflict_resolver_cron),
+              updated_at = ?
           WHERE id = ?`,
     args: [
-      buildPipelineEnabled ? 1 : 0,
-      pipelineCron ?? null,
-      pipelinePrompt ?? null,
-      conflictResolverEnabled ? 1 : 0,
-      conflictResolverCron ?? '0 18 * * *',
+      buildPipelineEnabled !== undefined ? (buildPipelineEnabled ? 1 : 0) : null,
+      pipelineCron !== undefined ? pipelineCron : null,
+      pipelinePrompt !== undefined ? pipelinePrompt : null,
+      conflictResolverEnabled !== undefined ? (conflictResolverEnabled ? 1 : 0) : null,
+      conflictResolverCron !== undefined ? conflictResolverCron : null,
       Date.now(),
       projectId
     ],

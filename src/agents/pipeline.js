@@ -97,14 +97,6 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
     } finally {
         await decrementTasks(project.id);
 
-        // Nettoyage de sécurité: si le compteur de tâches est bloqué > 0, on le force à 0
-        let currentTasks = await getActiveTasks(project.id);
-        while (currentTasks > 0) {
-            log("info", `[${project.id} - Pipeline] ⚠️ Nettoyage d'une tâche fantôme...`);
-            await decrementTasks(project.id);
-            currentTasks = await getActiveTasks(project.id);
-        }
-
         // 5. Baisse du drapeau rouge, les agents de fond reprennent
         await unlockProject(project.id);
         log("info", `[${project.id} - Pipeline] 🔓 Projet déverrouillé, les agents repartent au galop !`);

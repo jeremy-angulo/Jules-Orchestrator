@@ -414,8 +414,6 @@ function renderProjects() {
     `;
     el.projectsCards.appendChild(card);
   }
-
-  el.projectsCards.addEventListener('click', handleProjectsClick, { once: false });
 }
 
 async function handleProjectsClick(e) {
@@ -599,10 +597,6 @@ function renderProjectDetail(data, assignments) {
   });
 
   showTab(activeTab);
-
-  // Wire up detail actions (lock icon, run-agent, assignment buttons)
-  el.projectDetailTitle.addEventListener('click', handleDetailClick);
-  el.projectDetailContent.addEventListener('click', handleDetailClick);
 }
 
 function lockIconSVG(color) {
@@ -2699,6 +2693,11 @@ async function init() {
   initModals();
   initGlobalActions();
   initSessionDrawer();
+
+  // Delegation
+  el.projectsCards.addEventListener('click', handleProjectsClick);
+  el.projectDetailTitle.addEventListener('click', handleDetailClick);
+  el.projectDetailContent.addEventListener('click', handleDetailClick);
 
   // Nav clicks
   el.navItems.forEach(item => {

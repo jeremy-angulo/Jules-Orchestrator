@@ -665,7 +665,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
   async startSchedulers() {
     // Initial stats update
     for (const project of this.projects) {
-      this.updateProjectStats(project.id).catch(() => {});
+      this.updateProjectStats(project.id).catch(err => this.log('error', `Initial stats update failed for ${project.id}: ${err.message}`));
     }
 
     if (!this.statsInterval) {
@@ -682,7 +682,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
             recordDashboardMetric('locked_projects', (status.projects || []).filter(p => p.locked).length),
           ]);
           for (const project of this.projects) {
-            this.updateProjectStats(project.id).catch(() => {});
+            this.updateProjectStats(project.id).catch(err => this.log('error', `Periodic stats update failed for ${project.id}: ${err.message}`));
           }
         } catch (err) {
           this.log('error', `[ControlCenter] recordMetrics failed: ${err.message}`, { stack: err.stack });
@@ -696,18 +696,18 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
     if (!this.systemRunners.autoMergeService) {
       this.systemRunners.autoMergeService = setInterval(() => this._autoMergeCycle(), 10 * 60 * 1000);
       this.log('info', 'Auto-merge service started (10m interval)');
-      this._autoMergeCycle().catch(() => {}); // Initial run
+      this._autoMergeCycle().catch(err => this.log('error', `Initial auto-merge cycle failed: ${err.message}`)); // Initial run
     }
 
     // Stale sessions cleanup (every hour)
     if (!this.systemRunners.staleCleanup) {
       this.systemRunners.staleCleanup = setInterval(() => this._cleanupStaleSessions(), 60 * 60 * 1000);
-      this._cleanupStaleSessions().catch(() => {});
+      this._cleanupStaleSessions().catch(err => this.log('error', `Initial stale cleanup failed: ${err.message}`));
     }
 
     // DB pruning — delete rows older than 7 days from high-volume tables (every 6h)
     if (!this.systemRunners.dbPruner) {
-      const runPrune = () => pruneOldData(7).then(r => this.log('info', 'DB pruned', r)).catch(() => {});
+      const runPrune = () => pruneOldData(7).then(r => this.log('info', 'DB pruned', r)).catch(err => this.log('error', `DB pruning failed: ${err.message}`));
       runPrune();
       this.systemRunners.dbPruner = setInterval(runPrune, 6 * 60 * 60 * 1000);
     }
