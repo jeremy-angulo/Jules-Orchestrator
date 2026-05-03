@@ -184,10 +184,16 @@ export async function monitorExistingSession(sessionName, agentName, project, op
     if (shouldStop()) return false;
     const s = await getSession(agentName, sessionName, requestOptions).catch(() => null);
     if (!s) { await sleep(GLOBAL_CONFIG.POLLING_INTERVAL); continue; }
+    
+    let acted = false;
     if (s.state === 'AWAITING_PLAN_APPROVAL') {
+      log("info", `[${project.id} - ${agentName}] 💬 Approving plan for resumed session...`);
       await approvePlan(agentName, sessionName, requestOptions).catch(() => {});
+      acted = true;
     } else if (s.state === 'AWAITING_USER_FEEDBACK') {
+      log("info", `[${project.id} - ${agentName}] 💬 Injecting feedback to resumed session: "${feedbackMessage}"...`);
       await sendMessage(agentName, sessionName, feedbackMessage, requestOptions).catch(() => {});
+      acted = true;
     } else if (s.state === 'COMPLETED') {
       const hasPR = s.outputs?.some(o => o.pullRequest);
       if (!hasPR) return false;
@@ -196,7 +202,9 @@ export async function monitorExistingSession(sessionName, agentName, project, op
     } else if (s.state === 'FAILED') {
       return false;
     }
-    await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+    
+    // If we acted, check again soon. Otherwise wait full interval.
+    await sleep(acted ? 2000 : GLOBAL_CONFIG.POLLING_INTERVAL);
   }
 }
 
@@ -259,11 +267,16 @@ export async function startAndMonitorSession(instruction, agentName, project, op
           await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
           continue;
         }
+
+        let acted = false;
         if (state.state === 'AWAITING_PLAN_APPROVAL') {
+          log("info", `[${project.id} - ${agentName}] 💬 Approving plan...`);
           await approvePlan(agentName, sessionName, requestOptions);
+          acted = true;
         } else if (state.state === 'AWAITING_USER_FEEDBACK') {
           log("info", `[${project.id} - ${agentName}] 💬 Session bloquée en attente d'un retour. Injection de "${feedbackMessage}"...`);
           await sendMessage(agentName, sessionName, feedbackMessage, requestOptions);
+          acted = true;
         } else if (state.state === 'COMPLETED') {
           // Anti-Triche : Vérifier qu'une PR a bien été créée
           let hasPR = false;
@@ -304,7 +317,7 @@ export async function startAndMonitorSession(instruction, agentName, project, op
           log("info", `[${project.id} - ${agentName}] 🛑 Arrêt demandé avant prochain polling.`);
           return false;
         }
-        await sleep(GLOBAL_CONFIG.POLLING_INTERVAL);
+        await sleep(acted ? 2000 : GLOBAL_CONFIG.POLLING_INTERVAL);
       }
     } catch (e) {
       log("error", `[${project.id} - ${agentName}] Erreur critique lors de la surveillance (Tentative ${attempt}/${MAX_RETRIES}):`, e);
