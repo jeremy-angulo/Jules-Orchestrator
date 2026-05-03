@@ -92,6 +92,7 @@ router.get('/:projectId/detail', apiRateLimiter, async (req, res) => {
                 lockedAt: projectState.lockedAt,
                 lockReason: projectState.lockReason,
                 hasPipeline: !!project.buildAndMergePipeline,
+                buildAndMergePipeline: project.buildAndMergePipeline,
                 buildPipelineEnabled: project.buildPipelineEnabled,
                 conflictResolverEnabled: project.conflictResolverEnabled,
                 conflictResolverCron: project.conflictResolverCron

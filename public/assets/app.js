@@ -761,7 +761,7 @@ function renderPipelinesTab(container, project) {
             <span class="chip ${project.buildPipelineEnabled ? 'ok' : ''}">${project.buildPipelineEnabled ? 'ENABLED' : 'DISABLED'}</span>
           </div>
           <p class="muted small">
-            ${project.hasPipeline ? `Schedule: <span class="mono">${escapeHtml(project.buildAndMergePipeline.cronSchedule)}</span>` : 'No agent instructions configured'}
+            ${project.hasPipeline ? (project.buildAndMergePipeline?.cronSchedule ? `Schedule: <span class="mono">${escapeHtml(project.buildAndMergePipeline.cronSchedule)}</span>` : 'Manual Trigger Only') : 'No agent instructions configured'}
           </p>
         </div>
         <div style="display:flex;gap:8px;align-items:center">

@@ -112,7 +112,7 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
 }
 
 export function scheduleBuildAndMergePipeline(project, options = {}) {
-  if (!project.buildAndMergePipeline) return null;
+  if (!project.buildAndMergePipeline || !project.buildAndMergePipeline.cronSchedule) return null;
   return cron.schedule(project.buildAndMergePipeline.cronSchedule, async () => {
     await runBuildAndMergePipelineOnce(project, options);
   });

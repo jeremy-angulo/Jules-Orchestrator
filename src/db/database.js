@@ -664,6 +664,28 @@ export async function upsertProjectConfig(p) {
   });
   invalidateProjectConfigCache(p.id);
 }
+export async function updateProjectAutomation(projectId, { 
+  buildPipelineEnabled, pipelineCron, pipelinePrompt,
+  conflictResolverEnabled, conflictResolverCron
+}) {
+  await executeWithRetry({
+    sql: `UPDATE projects_config
+          SET build_pipeline_enabled = ?, pipeline_cron = ?, pipeline_prompt = ?,
+              conflict_resolver_enabled = ?, conflict_resolver_cron = ?, updated_at = ?
+          WHERE id = ?`,
+    args: [
+      buildPipelineEnabled ? 1 : 0,
+      pipelineCron ?? null,
+      pipelinePrompt ?? null,
+      conflictResolverEnabled ? 1 : 0,
+      conflictResolverCron ?? '0 18 * * *',
+      Date.now(),
+      projectId
+    ],
+  });
+  invalidateProjectConfigCache(projectId);
+}
+
 export async function deleteProjectConfig(id) {
   await executeWithRetry({ sql: 'DELETE FROM projects_config WHERE id = ?', args: [id] });
   invalidateProjectConfigCache(id);

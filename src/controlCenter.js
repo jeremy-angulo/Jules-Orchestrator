@@ -262,7 +262,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       buildPipelineEnabled: !!dbRow.build_pipeline_enabled,
       conflictResolverEnabled: !!dbRow.conflict_resolver_enabled,
       conflictResolverCron: dbRow.conflict_resolver_cron || '0 18 * * *',
-      buildAndMergePipeline: dbRow.pipeline_cron ? {
+      buildAndMergePipeline: (dbRow.pipeline_cron || dbRow.pipeline_prompt) ? {
         cronSchedule: dbRow.pipeline_cron,
         prompt: dbRow.pipeline_prompt || ''
       } : null
@@ -683,8 +683,10 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       if (project.buildPipelineEnabled && project.buildAndMergePipeline) {
         if (!this.systemRunners.perProjectPipelines.has(project.id)) {
           const task = scheduleBuildAndMergePipeline(project);
-          this.systemRunners.perProjectPipelines.set(project.id, task);
-          this.log('info', 'Project build pipeline started', { projectId: project.id, cron: project.buildAndMergePipeline.cronSchedule });
+          if (task) {
+            this.systemRunners.perProjectPipelines.set(project.id, task);
+            this.log('info', 'Project build pipeline started', { projectId: project.id, cron: project.buildAndMergePipeline.cronSchedule });
+          }
         }
       }
 
