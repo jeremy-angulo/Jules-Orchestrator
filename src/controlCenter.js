@@ -691,11 +691,12 @@ export class ControlCenter {
           return;
         }
 
-        // Concurrency management
+        // Concurrency management — exclude self so the check counts OTHER runners only
         const concurrency = current.concurrency || 1;
-        const currentRunning = Array.from(this.runners.values()).filter(r => 
-          r.type === 'assignment-loop' && 
-          r.details.assignmentId === assignment.id && 
+        const currentRunning = Array.from(this.runners.values()).filter(r =>
+          r.id !== runner.id &&
+          r.type === 'assignment-loop' &&
+          r.details.assignmentId === assignment.id &&
           r.status === 'running'
         ).length;
 
