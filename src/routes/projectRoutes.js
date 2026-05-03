@@ -43,14 +43,20 @@ router.post('/config', apiRateLimiter, requirePermission('projects.add'), async 
     const { 
         id, github_repo, github_branch, github_token, 
         pipeline_cron, pipeline_prompt, build_pipeline_enabled,
-        conflict_resolver_enabled, conflict_resolver_cron
+        pipeline_source_branch, pipeline_target_branch,
+        conflict_resolver_enabled, conflict_resolver_cron,
+        site_check_enabled, site_check_base_url, site_check_pause_ms,
+        site_check_locale, site_check_concurrency
     } = req.body || {};
     if (!id?.trim() || !github_repo?.trim()) return res.status(400).json({ error: 'id and github_repo are required.' });
     try {
         await upsertProjectConfig({ 
             id, github_repo, github_branch, github_token, 
             pipeline_cron, pipeline_prompt, build_pipeline_enabled,
-            conflict_resolver_enabled, conflict_resolver_cron 
+            pipeline_source_branch, pipeline_target_branch,
+            conflict_resolver_enabled, conflict_resolver_cron,
+            site_check_enabled, site_check_base_url, site_check_pause_ms,
+            site_check_locale, site_check_concurrency
         });
         const row = await getProjectConfig(id);
         

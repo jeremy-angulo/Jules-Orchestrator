@@ -162,11 +162,6 @@ export class ControlCenter {
       return;
     }
 
-    if (totalConflicts === 0 && force) {
-      this.log('info', '[BatchConflict] No conflicts found to resolve, even with force. Skipping.');
-      return;
-    }
-
     this.log('info', `[BatchConflict] Found ${totalConflicts} conflicts across ${allConflictingPRs.length} projects. Dispatching maintenance agent on ${runnerProjectId}...`);
 
     const resolverProject = this.projects.find(p => p.id === runnerProjectId) || masterProject || this.projects[0];
