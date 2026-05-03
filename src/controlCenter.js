@@ -70,6 +70,9 @@ export class ControlCenter {
     this.systemRunners = {
       globalDailyMerge: null,
       autoMergeService: null,
+      staleCleanup: null,
+      dbPruner: null,
+      batchConflictResolver: null,
       perProjectPipelines: new Map()
     };
     this.projectStats = new Map(); // projectId -> { openPRCount, lastUpdate }
@@ -719,6 +722,10 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
     if (this.systemRunners.dbPruner) {
       clearInterval(this.systemRunners.dbPruner);
       this.systemRunners.dbPruner = null;
+    }
+    if (this.systemRunners.batchConflictResolver) {
+      this.systemRunners.batchConflictResolver.stop();
+      this.systemRunners.batchConflictResolver = null;
     }
   }
   async startAll() {
