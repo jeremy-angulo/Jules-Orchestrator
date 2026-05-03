@@ -851,7 +851,7 @@ async function renderSiteCheckTab(container, project) {
         Screenshots are committed to <code>screenshots/{locale}/{path}.png</code> in the repo.
       </p>
 
-      <div class="form-group" style="display:grid;grid-template-columns:120px 140px 140px 140px;gap:12px;align-items:end;margin-bottom:1rem">
+      <div class="form-group" style="display:grid;grid-template-columns:120px 130px 130px 110px 110px;gap:12px;align-items:end;margin-bottom:1rem">
         <div>
           <label class="form-label">Locale</label>
           <select id="scLocale" class="form-control">
@@ -867,6 +867,9 @@ async function renderSiteCheckTab(container, project) {
           <label class="form-label">Pause (ms)</label>
           <input id="scPauseMs" type="number" class="form-control" min="0" step="1000" value="${config.pauseMs || 5000}" />
         </div>
+        <button id="scUpdateBtn" class="btn" type="button" style="${config.enabled ? '' : 'display:none'}; background: var(--purple); color: white; border: none;">
+          Update
+        </button>
         <button id="scToggleBtn" class="btn ${config.enabled ? 'btn-danger' : 'btn'}" type="button">
           ${config.enabled ? 'Disable' : 'Enable'}
         </button>
@@ -947,26 +950,42 @@ async function renderSiteCheckTab(container, project) {
   }
   sec.querySelector('#scFilterStatus').addEventListener('change', applyFilters);
 
+  async function saveSiteCheck(newEnabled) {
+    const pauseMs = Number(sec.querySelector('#scPauseMs').value) || 5000;
+    const locale  = sec.querySelector('#scLocale').value;
+    const concurrency = Number(sec.querySelector('#scConcurrency').value) || 1;
+    const res = await fetch(`/api/projects/${project.id}/site-check/toggle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: newEnabled, baseUrl: null, pauseMs, locale, concurrency }),
+    });
+    if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
+    showToast(`Site Check ${newEnabled ? (newEnabled === config.enabled ? 'updated' : 'enabled') : 'disabled'}`);
+    container.innerHTML = '';
+    renderSiteCheckTab(container, project);
+  }
+
+  // Update button
+  sec.querySelector('#scUpdateBtn')?.addEventListener('click', async () => {
+    const btn = sec.querySelector('#scUpdateBtn');
+    btn.disabled = true;
+    btn.textContent = 'Updating…';
+    try {
+      await saveSiteCheck(config.enabled);
+    } catch (e) {
+      showToast(`Error: ${e.message}`, 'error');
+      btn.disabled = false;
+      btn.textContent = 'Update';
+    }
+  });
+
   // Toggle button
   sec.querySelector('#scToggleBtn').addEventListener('click', async () => {
     const btn = sec.querySelector('#scToggleBtn');
     btn.disabled = true;
     btn.textContent = 'Saving…';
     try {
-      const pauseMs = Number(sec.querySelector('#scPauseMs').value) || 5000;
-      const locale  = sec.querySelector('#scLocale').value;
-      const concurrency = Number(sec.querySelector('#scConcurrency').value) || 1;
-      const newEnabled = !config.enabled;
-      const res = await fetch(`/api/projects/${project.id}/site-check/toggle`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: newEnabled, baseUrl: null, pauseMs, locale, concurrency }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error || 'Toggle failed');
-      showToast(`Site Check ${newEnabled ? 'enabled' : 'disabled'}`);
-      // Re-render tab
-      container.innerHTML = '';
-      renderSiteCheckTab(container, project);
+      await saveSiteCheck(!config.enabled);
     } catch (e) {
       showToast(`Error: ${e.message}`, 'error');
       btn.disabled = false;
