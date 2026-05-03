@@ -40,14 +40,24 @@ router.get('/config', apiRateLimiter, requirePermission('dashboard.read'), async
 });
 
 router.post('/config', apiRateLimiter, requirePermission('projects.add'), async (req, res) => {
-    const { id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt } = req.body || {};
+    const { 
+        id, github_repo, github_branch, github_token, 
+        pipeline_cron, pipeline_prompt, build_pipeline_enabled,
+        conflict_resolver_enabled, conflict_resolver_cron
+    } = req.body || {};
     if (!id?.trim() || !github_repo?.trim()) return res.status(400).json({ error: 'id and github_repo are required.' });
     try {
-        await upsertProjectConfig({ id, github_repo, github_branch, github_token, pipeline_cron, pipeline_prompt });
+        await upsertProjectConfig({ 
+            id, github_repo, github_branch, github_token, 
+            pipeline_cron, pipeline_prompt, build_pipeline_enabled,
+            conflict_resolver_enabled, conflict_resolver_cron 
+        });
         const row = await getProjectConfig(id);
         
-        // Refresh ControlCenter runtime
+        // Refresh ControlCenter runtime and restart schedulers to apply changes
         await controlCenter.init();
+        await controlCenter.stopSchedulers();
+        await controlCenter.startSchedulers();
         
         await audit(req, 'project.upsert', id, { github_repo });
         res.status(200).json({ ok: true, project: row });
@@ -81,7 +91,10 @@ router.get('/:projectId/detail', apiRateLimiter, async (req, res) => {
                 locked: projectState.locked,
                 lockedAt: projectState.lockedAt,
                 lockReason: projectState.lockReason,
-                hasPipeline: !!project.buildAndMergePipeline
+                hasPipeline: !!project.buildAndMergePipeline,
+                buildPipelineEnabled: project.buildPipelineEnabled,
+                conflictResolverEnabled: project.conflictResolverEnabled,
+                conflictResolverCron: project.conflictResolverCron
             },
             runners: { running: running.sort(sortByTime), completed: completed.sort(sortByTime), failed: failed.sort(sortByTime) },
             summary: { total: projectRunners.length, runningCount: running.length, completedCount: completed.length, failedCount: failed.length }

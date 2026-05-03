@@ -129,6 +129,9 @@ export async function initTables() {
       pipeline_source_branch TEXT,
       pipeline_target_branch TEXT,
       pipeline_prompt TEXT,
+      build_pipeline_enabled BOOLEAN NOT NULL DEFAULT 0,
+      conflict_resolver_enabled BOOLEAN NOT NULL DEFAULT 0,
+      conflict_resolver_cron TEXT DEFAULT '0 18 * * *',
       site_check_enabled BOOLEAN NOT NULL DEFAULT 0,
       site_check_base_url TEXT,
       site_check_pause_ms INTEGER NOT NULL DEFAULT 5000,
@@ -246,7 +249,11 @@ export async function initTables() {
     "ALTER TABLE site_pages ADD COLUMN requires_auth BOOLEAN DEFAULT 0",
     "ALTER TABLE site_pages ADD COLUMN requires_admin BOOLEAN DEFAULT 0",
     "ALTER TABLE site_pages ADD COLUMN is_wizard BOOLEAN DEFAULT 0",
+    "ALTER TABLE projects_config ADD COLUMN build_pipeline_enabled BOOLEAN NOT NULL DEFAULT 0",
+    "ALTER TABLE projects_config ADD COLUMN conflict_resolver_enabled BOOLEAN NOT NULL DEFAULT 0",
+    "ALTER TABLE projects_config ADD COLUMN conflict_resolver_cron TEXT DEFAULT '0 18 * * *'",
     "ALTER TABLE prompts ADD COLUMN prompt_name TEXT",
+
     "ALTER TABLE token_names ADD COLUMN id INTEGER",
     "ALTER TABLE agent_sessions ADD COLUMN id INTEGER",
     "CREATE INDEX IF NOT EXISTS idx_agent_sessions_project   ON agent_sessions(project_id, started_at)",
@@ -624,10 +631,11 @@ export async function upsertProjectConfig(p) {
     sql: `INSERT INTO projects_config (
             id, github_repo, github_branch, github_token, pipeline_cron,
             pipeline_source_branch, pipeline_target_branch, pipeline_prompt,
+            build_pipeline_enabled, conflict_resolver_enabled, conflict_resolver_cron,
             site_check_enabled, site_check_base_url, site_check_pause_ms,
             site_check_locale, site_check_concurrency,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             github_repo=excluded.github_repo,
             github_branch=excluded.github_branch,
@@ -636,6 +644,9 @@ export async function upsertProjectConfig(p) {
             pipeline_source_branch=excluded.pipeline_source_branch,
             pipeline_target_branch=excluded.pipeline_target_branch,
             pipeline_prompt=excluded.pipeline_prompt,
+            build_pipeline_enabled=excluded.build_pipeline_enabled,
+            conflict_resolver_enabled=excluded.conflict_resolver_enabled,
+            conflict_resolver_cron=excluded.conflict_resolver_cron,
             site_check_enabled=excluded.site_check_enabled,
             site_check_base_url=excluded.site_check_base_url,
             site_check_pause_ms=excluded.site_check_pause_ms,
@@ -645,9 +656,10 @@ export async function upsertProjectConfig(p) {
     args: [
       p.id, p.github_repo, p.github_branch || 'main', p.github_token, p.pipeline_cron,
       p.pipeline_source_branch, p.pipeline_target_branch, p.pipeline_prompt,
+      p.build_pipeline_enabled ? 1 : 0, p.conflict_resolver_enabled ? 1 : 0, p.conflict_resolver_cron || '0 18 * * *',
       p.site_check_enabled ? 1 : 0, p.site_check_base_url || null, p.site_check_pause_ms || 5000,
       p.site_check_locale || 'fr', p.site_check_concurrency || 1,
-      Date.now(), Date.now()
+      p.created_at || Date.now(), Date.now()
     ]
   });
   invalidateProjectConfigCache(p.id);

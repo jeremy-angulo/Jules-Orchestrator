@@ -72,8 +72,8 @@ export class ControlCenter {
       autoMergeService: null,
       staleCleanup: null,
       dbPruner: null,
-      batchConflictResolver: null,
-      perProjectPipelines: new Map()
+      batchConflictResolvers: new Map(), // projectId -> cronTask
+      perProjectPipelines: new Map() // projectId -> cronTask
     };
     this.projectStats = new Map(); // projectId -> { openPRCount, lastUpdate }
     this.cache = {
@@ -130,10 +130,10 @@ export class ControlCenter {
     }
   }
 
-  async _batchConflictResolutionCycle() {
-    this.log('info', '[BatchConflict] Starting daily scan for dirty PRs...');
+  async _batchConflictResolutionCycle(runnerProjectId) {
+    this.log('info', `[BatchConflict] Starting maintenance cycle triggered by ${runnerProjectId}...`);
     
-    // Refresh project list from DB to ensure new projects (like Jules-Orchestrator itself) are seen
+    // Refresh project list from DB
     await this.init();
 
     const allConflictingPRs = [];
@@ -144,7 +144,6 @@ export class ControlCenter {
 
     for (const project of this.projects) {
       try {
-        // Temporarily inject master token if project token is missing
         const scanProject = { ...project, githubToken: project.githubToken || masterToken };
         const prs = await listOpenPRs(scanProject);
         const dirty = prs.filter(pr => pr.mergeable === false && pr.mergeable_state === 'dirty');
@@ -163,10 +162,11 @@ export class ControlCenter {
       return;
     }
 
-    this.log('info', `[BatchConflict] Found ${totalConflicts} conflicts across ${allConflictingPRs.length} projects. Dispatching Jules agent on Jules-Orchestrator...`);
+    this.log('info', `[BatchConflict] Found ${totalConflicts} conflicts across ${allConflictingPRs.length} projects. Dispatching maintenance agent on ${runnerProjectId}...`);
 
-    if (!masterProject) {
-      this.log('error', '[BatchConflict] Project Jules-Orchestrator not found in runtime. Cannot dispatch agent.');
+    const resolverProject = this.projects.find(p => p.id === runnerProjectId) || masterProject || this.projects[0];
+    if (!resolverProject) {
+      this.log('error', '[BatchConflict] No project available to dispatch agent.');
       return;
     }
 
@@ -204,7 +204,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
 À la fin de ta session, fournis un court résumé des PRs réparées et de celles abandonnées (avec la raison).
 `;
 
-    await startAndMonitorSession(batchPrompt, 'Batch-Conflict-Resolver', masterProject, {
+    await startAndMonitorSession(batchPrompt, 'Batch-Conflict-Resolver', resolverProject, {
       onTokenPicked: (info) => {
         this.log('info', `[BatchConflict] Agent dispatched using token: ${info.label}`);
       }
@@ -258,13 +258,15 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       githubBranch: dbRow.github_branch || 'main',
       githubToken: dbRow.github_token || process.env.GITHUB_TOKEN || '',
       backgroundPrompts: [],
+      buildPipelineEnabled: !!dbRow.build_pipeline_enabled,
+      conflictResolverEnabled: !!dbRow.conflict_resolver_enabled,
+      conflictResolverCron: dbRow.conflict_resolver_cron || '0 18 * * *',
       buildAndMergePipeline: dbRow.pipeline_cron ? {
         cronSchedule: dbRow.pipeline_cron,
         prompt: dbRow.pipeline_prompt || ''
       } : null
     };
   }
-
   async getProjectRuntime(projectId) {
     const inMemory = this.projectById.get(projectId);
     if (inMemory) return inMemory;
@@ -662,12 +664,6 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       this._autoMergeCycle().catch(() => {}); // Initial run
     }
 
-    // Batch Conflict Resolver (daily at 18:00)
-    if (!this.systemRunners.batchConflictResolver) {
-      this.systemRunners.batchConflictResolver = cron.schedule('0 18 * * *', () => this._batchConflictResolutionCycle());
-      this.log('info', 'Batch conflict resolution scheduler started (daily 18:00)');
-    }
-
     // Stale sessions cleanup (every hour)
     if (!this.systemRunners.staleCleanup) {
       this.systemRunners.staleCleanup = setInterval(() => this._cleanupStaleSessions(), 60 * 60 * 1000);
@@ -682,11 +678,24 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
     }
 
     for (const project of this.projects) {
-      if (!project.buildAndMergePipeline) continue;
-      if (this.systemRunners.perProjectPipelines.has(project.id)) continue;
-      const task = scheduleBuildAndMergePipeline(project);
-      this.systemRunners.perProjectPipelines.set(project.id, task);
-      this.log('info', 'Project pipeline scheduler started', { projectId: project.id });
+      // 1. Build & Merge Pipeline
+      if (project.buildPipelineEnabled && project.buildAndMergePipeline) {
+        if (!this.systemRunners.perProjectPipelines.has(project.id)) {
+          const task = scheduleBuildAndMergePipeline(project);
+          this.systemRunners.perProjectPipelines.set(project.id, task);
+          this.log('info', 'Project build pipeline started', { projectId: project.id, cron: project.buildAndMergePipeline.cronSchedule });
+        }
+      }
+
+      // 2. Batch Conflict Resolver
+      if (project.conflictResolverEnabled) {
+        if (!this.systemRunners.batchConflictResolvers.has(project.id)) {
+          const cronSchedule = project.conflictResolverCron || '0 18 * * *';
+          const task = cron.schedule(cronSchedule, () => this._batchConflictResolutionCycle(project.id));
+          this.systemRunners.batchConflictResolvers.set(project.id, task);
+          this.log('info', 'Project conflict resolver started', { projectId: project.id, cron: cronSchedule });
+        }
+      }
     }
   }
 
@@ -723,9 +732,9 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       clearInterval(this.systemRunners.dbPruner);
       this.systemRunners.dbPruner = null;
     }
-    if (this.systemRunners.batchConflictResolver) {
-      this.systemRunners.batchConflictResolver.stop();
-      this.systemRunners.batchConflictResolver = null;
+    for (const [projectId, task] of this.systemRunners.batchConflictResolvers.entries()) {
+      task.stop();
+      this.systemRunners.batchConflictResolvers.delete(projectId);
     }
   }
   async startAll() {
@@ -1187,7 +1196,8 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       schedulers: {
         globalDailyMerge: !!this.systemRunners.globalDailyMerge,
         autoMergeService: !!this.systemRunners.autoMergeService,
-        perProjectPipelines: Array.from(this.systemRunners.perProjectPipelines.keys())
+        buildPipelines: Array.from(this.systemRunners.perProjectPipelines.keys()),
+        conflictResolvers: Array.from(this.systemRunners.batchConflictResolvers.keys())
       }
     };
   }

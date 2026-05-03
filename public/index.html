@@ -474,12 +474,19 @@
   <div id="pipelineModal" class="modal-overlay">
     <div class="modal-content">
       <div class="modal-header">
-        <h2 id="pipelineModalTitle">Configure Pipeline</h2>
+        <h2 id="pipelineModalTitle">Configure Build Pipeline</h2>
         <button class="btn btn-icon modal-close" type="button">✕</button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="pipelineModalProjectId" />
-        
+
+        <div class="form-group">
+          <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+            Enable Pipeline
+            <input type="checkbox" id="pipelineModalEnabled" />
+          </label>
+        </div>
+
         <div class="form-group">
           <label class="form-label">Cron Schedule</label>
           <input type="hidden" id="pipelineCronExpr" />
@@ -536,12 +543,79 @@
         <button id="pipelineModalDelete" class="btn btn-outline" style="color:var(--red);border-color:var(--red);display:none" type="button">Delete</button>
         <div style="display:flex;gap:10px">
           <button class="btn btn-secondary modal-close" type="button">Cancel</button>
-          <button id="pipelineModalSave" class="btn" type="button">Add Pipeline</button>
+          <button id="pipelineModalSave" class="btn" type="button">Save Pipeline</button>
         </div>
       </div>
     </div>
   </div>
 
+  <!-- Conflict Resolver Modal -->
+  <div id="conflictResolverModal" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Configure Conflict Resolver</h2>
+        <button class="btn btn-icon modal-close" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="conflictResolverModalProjectId" />
+
+        <div class="form-group">
+          <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+            Enable Batch Resolver
+            <input type="checkbox" id="conflictResolverModalEnabled" />
+          </label>
+          <p class="form-hint">Scans for dirty PRs across all projects and dispatches a maintenance agent if ≥3 conflicts are found.</p>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Cron Schedule</label>
+          <input type="hidden" id="conflictResolverCronExpr" />
+          <div class="cron-builder" id="conflictResolverCronBuilder" data-cron-freq="daily">
+            <div class="cron-freq-tabs cronFreqTabs">
+              <button class="cron-freq-btn is-active" data-freq="daily" type="button">Daily</button>
+              <button class="cron-freq-btn" data-freq="weekly" type="button">Weekly</button>
+            </div>
+
+            <div class="cron-panel cronPanelDaily">
+              <p class="cron-panel-label">Every day at</p>
+              <div class="cron-time-row">
+                <select class="form-control cron-select cronDailyHour"></select>
+                <span class="cron-colon">:</span>
+                <select class="form-control cron-select cronDailyMin"></select>
+              </div>
+            </div>
+
+            <div class="cron-panel cronPanelWeekly" style="display:none">
+              <p class="cron-panel-label">Every week on</p>
+              <div class="cron-day-picker cronDayPicker">
+                <button class="cron-day-btn" data-day="1" type="button">Mon</button>
+                <button class="cron-day-btn" data-day="2" type="button">Tue</button>
+                <button class="cron-day-btn" data-day="3" type="button">Wed</button>
+                <button class="cron-day-btn" data-day="4" type="button">Thu</button>
+                <button class="cron-day-btn" data-day="5" type="button">Fri</button>
+                <button class="cron-day-btn" data-day="6" type="button">Sat</button>
+                <button class="cron-day-btn" data-day="0" type="button">Sun</button>
+              </div>
+              <div class="cron-time-row" style="margin-top:0.5rem">
+                <select class="form-control cron-select cronWeeklyHour"></select>
+                <span class="cron-colon">:</span>
+                <select class="form-control cron-select cronWeeklyMin"></select>
+              </div>
+            </div>
+
+            <div class="cron-preview-row cronPreviewRow">
+              <span class="muted small">Cron expression:</span>
+              <code class="cron-preview-code cronPreviewExpr">0 18 * * *</code>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary modal-close" type="button">Cancel</button>
+        <button id="conflictResolverModalSave" class="btn" type="button">Save Settings</button>
+      </div>
+    </div>
+  </div>
   <!-- Session Drawer -->
   <div id="sessionDrawer" class="session-drawer">
     <div class="session-drawer-header">

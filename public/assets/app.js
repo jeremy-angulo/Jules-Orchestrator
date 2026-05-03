@@ -752,42 +752,63 @@ function renderPipelinesTab(container, project) {
   const sec = document.createElement('div');
   sec.className = 'card';
   
-  let pipelinesHtml = '<p class="muted small">No pipelines configured yet.</p>';
-  if (project.hasPipeline) {
-    const config = project.pipelineConfig || {};
-    pipelinesHtml = `
-      <div class="stack-item">
-        <div class="row-between">
-          <div>
-            <strong>Build & Test (Default)</strong>
-            <p class="muted small">
-              ${config.cronSchedule ? `Schedule: <span class="mono">${escapeHtml(config.cronSchedule)}</span>` : 'Manual run only'}
-            </p>
+  let buildPipelineHtml = `
+    <div class="stack-item" style="opacity: ${project.buildPipelineEnabled ? '1' : '0.5'}">
+      <div class="row-between">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <strong>Build & Test Pipeline</strong>
+            <span class="chip ${project.buildPipelineEnabled ? 'ok' : ''}">${project.buildPipelineEnabled ? 'ENABLED' : 'DISABLED'}</span>
           </div>
-          <div style="display:flex;gap:8px;align-items:center">
-             <button class="btn btn-ghost btn-small" id="editPipelineBtn">Edit</button>
-             <button class="btn btn-secondary btn-small" data-action="run-pipeline" data-project="${project.id}">Run Now</button>
-          </div>
+          <p class="muted small">
+            ${project.hasPipeline ? `Schedule: <span class="mono">${escapeHtml(project.buildAndMergePipeline.cronSchedule)}</span>` : 'No agent instructions configured'}
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+           <button class="btn btn-ghost btn-small" id="editPipelineBtn">Configure</button>
+           <button class="btn btn-secondary btn-small" data-action="run-pipeline" data-project="${project.id}" ${project.hasPipeline ? '' : 'disabled'}>Run Now</button>
         </div>
       </div>
-    `;
-  }
+    </div>
+  `;
+
+  let conflictResolverHtml = `
+    <div class="stack-item" style="margin-top:1.5rem; opacity: ${project.conflictResolverEnabled ? '1' : '0.5'}">
+      <div class="row-between">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <strong>Batch Conflict Resolver</strong>
+            <span class="chip ${project.conflictResolverEnabled ? 'ok' : ''}">${project.conflictResolverEnabled ? 'ENABLED' : 'DISABLED'}</span>
+          </div>
+          <p class="muted small">
+            Schedule: <span class="mono">${escapeHtml(project.conflictResolverCron || '0 18 * * *')}</span>
+          </p>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+           <button class="btn btn-ghost btn-small" id="editConflictResolverBtn">Configure</button>
+        </div>
+      </div>
+    </div>
+  `;
 
   sec.innerHTML = `
     <div class="panel-head">
-      <h2>Pipelines</h2>
-      <button class="btn" id="createPipelineBtn">+ New Pipeline</button>
+      <h2>Project Automations</h2>
     </div>
-    <p class="muted" style="margin-top:1rem">A pipeline runs an agent on a schedule — it locks the project, waits for active agents (1h timeout), runs the agent, then unlocks.</p>
     <div id="pipelinesListContainer" style="margin-top:1rem">
-      ${pipelinesHtml}
+      ${buildPipelineHtml}
+      ${conflictResolverHtml}
     </div>
+    <p class="muted small" style="margin-top:1.5rem">
+      • <strong>Build Pipeline</strong>: Runs a specific agent on schedule (or manual) to stabilize the branch.<br>
+      • <strong>Conflict Resolver</strong>: Scans for "dirty" PRs and dispatches an agent if ≥3 conflicts are found.
+    </p>
   `;
   container.appendChild(sec);
 
   // Bind buttons
-  sec.querySelector('#createPipelineBtn')?.addEventListener('click', () => openPipelineModal(project.id));
-  sec.querySelector('#editPipelineBtn')?.addEventListener('click', () => openPipelineModal(project.id, project.pipelineConfig));
+  sec.querySelector('#editPipelineBtn')?.addEventListener('click', () => openPipelineModal(project.id, project.buildAndMergePipeline, project.buildPipelineEnabled));
+  sec.querySelector('#editConflictResolverBtn')?.addEventListener('click', () => openConflictResolverModal(project.id, project.conflictResolverCron, project.conflictResolverEnabled));
 }
 
 // =========================================================
@@ -1565,10 +1586,11 @@ async function handleDetailClick(e) {
 // =========================================================
 // Agent Library
 // =========================================================
-function openPipelineModal(projectId, config = null) {
+function openPipelineModal(projectId, config = null, enabled = false) {
   const modal = document.querySelector('#pipelineModal');
   document.querySelector('#pipelineModalProjectId').value = projectId;
-  document.querySelector('#pipelineModalTitle').textContent = config ? 'Edit Pipeline' : 'Create Pipeline';
+  document.querySelector('#pipelineModalTitle').textContent = config ? 'Edit Build Pipeline' : 'Configure Build Pipeline';
+  document.querySelector('#pipelineModalEnabled').checked = !!enabled;
   
   setCronBuilderFromExpr('#pipelineCronBuilder', '#pipelineCronExpr', config?.cronSchedule || '');
   
@@ -1576,7 +1598,7 @@ function openPipelineModal(projectId, config = null) {
   
   const saveBtn = document.querySelector('#pipelineModalSave');
   const deleteBtn = document.querySelector('#pipelineModalDelete');
-  saveBtn.textContent = config ? 'Update Pipeline' : 'Add Pipeline';
+  saveBtn.textContent = config ? 'Update Pipeline' : 'Save Pipeline';
   deleteBtn.style.display = config ? 'block' : 'none';
 
   modal.classList.add('show');
@@ -1586,28 +1608,66 @@ async function savePipeline() {
   const projectId = document.querySelector('#pipelineModalProjectId').value;
   const cron = document.querySelector('#pipelineCronExpr').value;
   const prompt = document.querySelector('#pipelineModalPrompt').value;
+  const enabled = document.querySelector('#pipelineModalEnabled').checked;
 
   const btn = document.querySelector('#pipelineModalSave');
   setLoading(btn, true);
 
   try {
-    // We update the project config with the pipeline info
-    // First we need the existing project config to not overwrite other fields
     const data = await apiGet('/api/projects/config');
     const project = (data.projects || []).find(p => p.id === projectId);
     if (!project) throw new Error('Project configuration not found');
 
     await apiPost('/api/projects/config', {
-      id: project.id,
-      github_repo: project.github_repo,
-      github_branch: project.github_branch,
-      github_token: project.github_token,
+      ...project,
       pipeline_cron: cron,
-      pipeline_prompt: prompt
+      pipeline_prompt: prompt,
+      build_pipeline_enabled: enabled ? 1 : 0
     });
 
     showToast('Pipeline saved');
     document.querySelector('#pipelineModal').classList.remove('show');
+    await refreshDashboard();
+    if (state.activeView === 'project-detail' && state.selectedProjectDetail === projectId) {
+      await fetchProjectDetail(projectId);
+    }
+  } catch (err) {
+    showToast(err.message, true);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+function openConflictResolverModal(projectId, cron, enabled) {
+  const modal = document.querySelector('#conflictResolverModal');
+  document.querySelector('#conflictResolverModalProjectId').value = projectId;
+  document.querySelector('#conflictResolverModalEnabled').checked = !!enabled;
+  
+  setCronBuilderFromExpr('#conflictResolverCronBuilder', '#conflictResolverCronExpr', cron || '0 18 * * *');
+  modal.classList.add('show');
+}
+
+async function saveConflictResolver() {
+  const projectId = document.querySelector('#conflictResolverModalProjectId').value;
+  const cron = document.querySelector('#conflictResolverCronExpr').value;
+  const enabled = document.querySelector('#conflictResolverModalEnabled').checked;
+
+  const btn = document.querySelector('#conflictResolverModalSave');
+  setLoading(btn, true);
+
+  try {
+    const data = await apiGet('/api/projects/config');
+    const project = (data.projects || []).find(p => p.id === projectId);
+    if (!project) throw new Error('Project configuration not found');
+
+    await apiPost('/api/projects/config', {
+      ...project,
+      conflict_resolver_cron: cron,
+      conflict_resolver_enabled: enabled ? 1 : 0
+    });
+
+    showToast('Conflict resolver settings saved');
+    document.querySelector('#conflictResolverModal').classList.remove('show');
     await refreshDashboard();
     if (state.activeView === 'project-detail' && state.selectedProjectDetail === projectId) {
       await fetchProjectDetail(projectId);
@@ -2486,6 +2546,7 @@ function initModals() {
   document.querySelector('#projectModalSave')?.addEventListener('click', saveProject);
   document.querySelector('#pipelineModalSave')?.addEventListener('click', savePipeline);
   document.querySelector('#pipelineModalDelete')?.addEventListener('click', deletePipeline);
+  document.querySelector('#conflictResolverModalSave')?.addEventListener('click', saveConflictResolver);
 
   // Mode radio toggle in assignment modal
   document.querySelectorAll('input[name="assignMode"]').forEach(r => {
@@ -2495,6 +2556,7 @@ function initModals() {
   // Cron builder
   initCronBuilder('#assignCronBuilder', '#assignCronExpr');
   initCronBuilder('#pipelineCronBuilder', '#pipelineCronExpr');
+  initCronBuilder('#conflictResolverCronBuilder', '#conflictResolverCronExpr');
 }
 
 // =========================================================
