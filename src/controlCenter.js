@@ -127,6 +127,83 @@ export class ControlCenter {
     }
   }
 
+  async _batchConflictResolutionCycle() {
+    this.log('info', '[BatchConflict] Starting daily scan for dirty PRs...');
+    const allConflictingPRs = [];
+    
+    // Master token from Jules-Orchestrator to use if a project has no token
+    const masterProject = this.projects.find(p => p.id === 'Jules-Orchestrator');
+    const masterToken = masterProject?.githubToken;
+
+    for (const project of this.projects) {
+      try {
+        // Temporarily inject master token if project token is missing
+        const scanProject = { ...project, githubToken: project.githubToken || masterToken };
+        const prs = await listOpenPRs(scanProject);
+        const dirty = prs.filter(pr => pr.mergeable === false && pr.mergeable_state === 'dirty');
+        if (dirty.length > 0) {
+          allConflictingPRs.push({ project, prs: dirty });
+        }
+      } catch (err) {
+        this.log('error', `[BatchConflict] Failed to scan project ${project.id}`, { error: err.message });
+      }
+    }
+
+    const totalConflicts = allConflictingPRs.reduce((sum, item) => sum + item.prs.length, 0);
+    
+    if (totalConflicts < 3) {
+      this.log('info', `[BatchConflict] Only ${totalConflicts} conflict(s) found. Minimum 3 required to dispatch agent. Skipping.`);
+      return;
+    }
+
+    this.log('info', `[BatchConflict] Found ${totalConflicts} conflicts across ${allConflictingPRs.length} projects. Dispatching Jules agent on Jules-Orchestrator...`);
+
+    if (!masterProject) {
+      this.log('error', '[BatchConflict] Project Jules-Orchestrator not found in runtime. Cannot dispatch agent.');
+      return;
+    }
+
+    const batchPrompt = `
+# Mission : Résolution Batch des conflits de merge
+
+Tu es l'agent de maintenance globale. Ta mission est de nettoyer les conflits de merge sur plusieurs projets pour débloquer le pipeline.
+
+## Projets à traiter :
+${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.githubRepo}): PRs #${item.prs.map(p => p.number).join(', #')}`).join('\n')}
+
+---
+
+## Pour chaque PR listée ci-dessus :
+
+### 1. Analyse du conflit
+- Clone le repository.
+- Checkout la branche de la PR.
+- Tente un merge de la branche cible (généralement \`dev\` ou \`main\`).
+- **Règle des 50%** : Calcule le ratio \`(fichiers en conflit) / (total fichiers modifiés dans la PR)\`.
+- Si le ratio est > 50%, ABANDONNE cette PR (trop risqué) et passe à la suivante.
+
+### 2. Résolution
+- **Screenshots** : Si le conflit porte sur des fichiers dans \`agent-screenshots/\` ou \`screenshots/\`, utilise systématiquement la version de la branche source : \`git checkout --theirs <file>\`.
+- **Code** : Résous les conflits de code de manière logique en préservant les fonctionnalités.
+- **Validation** : Vérifie que le projet build toujours (\`npm run build\` ou \`npx tsc\`).
+
+### 3. Livraison & Merge
+- Push les corrections sur la branche de la PR.
+- Utilise l'API GitHub (ou la commande \`gh pr merge\`) pour fusionner la PR si elle devient mergeable.
+
+---
+
+## Rapport final
+À la fin de ta session, fournis un court résumé des PRs réparées et de celles abandonnées (avec la raison).
+`;
+
+    await startAndMonitorSession(batchPrompt, 'Batch-Conflict-Resolver', masterProject, {
+      onTokenPicked: (info) => {
+        this.log('info', `[BatchConflict] Agent dispatched using token: ${info.label}`);
+      }
+    });
+  }
+
   async _autoMergeCycle() {
     for (const project of this.projects) {
       try {
@@ -616,6 +693,12 @@ Ta mission est de résoudre ces conflits proprement et de pusher le résultat.
       this.systemRunners.autoMergeService = setInterval(() => this._autoMergeCycle(), 10 * 60 * 1000);
       this.log('info', 'Auto-merge service started (10m interval)');
       this._autoMergeCycle().catch(() => {}); // Initial run
+    }
+
+    // Batch Conflict Resolver (daily at 18:00)
+    if (!this.systemRunners.batchConflictResolver) {
+      this.systemRunners.batchConflictResolver = cron.schedule('0 18 * * *', () => this._batchConflictResolutionCycle());
+      this.log('info', 'Batch conflict resolution scheduler started (daily 18:00)');
     }
 
     // Stale sessions cleanup (every hour)
