@@ -130,7 +130,7 @@ export class ControlCenter {
     }
   }
 
-  async _batchConflictResolutionCycle(runnerProjectId) {
+  async _batchConflictResolutionCycle(runnerProjectId, force = false) {
     this.log('info', `[BatchConflict] Starting maintenance cycle triggered by ${runnerProjectId}...`);
     
     // Refresh project list from DB
@@ -157,8 +157,13 @@ export class ControlCenter {
 
     const totalConflicts = allConflictingPRs.reduce((sum, item) => sum + item.prs.length, 0);
     
-    if (totalConflicts < 3) {
-      this.log('info', `[BatchConflict] Only ${totalConflicts} conflict(s) found. Minimum 3 required to dispatch agent. Skipping.`);
+    if (totalConflicts < 3 && !force) {
+      this.log('info', `[BatchConflict] Only ${totalConflicts} conflict(s) found. Minimum 3 required to dispatch agent (unless forced). Skipping.`);
+      return;
+    }
+
+    if (totalConflicts === 0 && force) {
+      this.log('info', '[BatchConflict] No conflicts found to resolve, even with force. Skipping.');
       return;
     }
 
@@ -578,7 +583,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
 
     runner.promise = (async () => {
       try {
-        await this._batchConflictResolutionCycle(projectId);
+        await this._batchConflictResolutionCycle(projectId, true);
         runner.iterations = 1;
         this._markRunnerStopped(runner, 'completed');
       } catch (err) {
