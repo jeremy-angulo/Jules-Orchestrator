@@ -81,7 +81,8 @@ export async function runBuildAndMergePipelineOnce(project, options = {}) {
         success = await startAndMonitorSession(prompt, "Pipeline Agent", project, { 
             shouldStop,
             feedbackMessage,
-            onTokenPicked: options.onTokenPicked
+            onTokenPicked: options.onTokenPicked,
+            preferredTokenId: 'key-1'
         });
 
         if (success) {
