@@ -13,43 +13,55 @@ export const client = createClient({
   authToken,
 });
 
-export async function executeWithRetry(stmt, retries = 10, delay = 1000) {
-  const normalizedStmt = typeof stmt === 'string' ? stmt : {
-    ...stmt,
-    args: stmt.args ? stmt.args.map(a => a === undefined ? null : a) : []
-  };
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await client.execute(normalizedStmt);
-    } catch (err) {
-      if (err.code === 'SQLITE_BUSY' && i < retries - 1) {
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
+// Simple async queue to serialize DB access
+let dbQueue = Promise.resolve();
+const serialize = (fn) => {
+  const result = dbQueue.then(fn);
+  dbQueue = result.catch(() => {}); // Prevent chain breakage on error
+  return result;
+};
 
-export async function batchWithRetry(stmts, mode, retries = 10, delay = 1000) {
-  const normalizedStmts = stmts.map(stmt => {
-    if (typeof stmt === 'string') return stmt;
-    return {
+export async function executeWithRetry(stmt, retries = 10, delay = 1000) {
+  return serialize(async () => {
+    const normalizedStmt = typeof stmt === 'string' ? stmt : {
       ...stmt,
       args: stmt.args ? stmt.args.map(a => a === undefined ? null : a) : []
     };
-  });
-  for (let i = 0; i < retries; i++) {
-    try {
-      return await client.batch(normalizedStmts, mode);
-    } catch (err) {
-      if (err.code === 'SQLITE_BUSY' && i < retries - 1) {
-        await new Promise(r => setTimeout(r, delay));
-        continue;
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await client.execute(normalizedStmt);
+      } catch (err) {
+        if (err.code === 'SQLITE_BUSY' && i < retries - 1) {
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
       }
-      throw err;
     }
-  }
+  });
+}
+
+export async function batchWithRetry(stmts, mode, retries = 10, delay = 1000) {
+  return serialize(async () => {
+    const normalizedStmts = stmts.map(stmt => {
+      if (typeof stmt === 'string') return stmt;
+      return {
+        ...stmt,
+        args: stmt.args ? stmt.args.map(a => a === undefined ? null : a) : []
+      };
+    });
+    for (let i = 0; i < retries; i++) {
+      try {
+        return await client.batch(normalizedStmts, mode);
+      } catch (err) {
+        if (err.code === 'SQLITE_BUSY' && i < retries - 1) {
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
+  });
 }
 
 // Prune rows older than N days from high-volume append-only tables.

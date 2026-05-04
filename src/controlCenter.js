@@ -842,87 +842,81 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
   }
 
   async _startAssignmentLoop(assignment, agent, project) {
-    const runnerId = `assignment:${assignment.id}:loop`;
-    if (this.runners.has(runnerId)) return runnerId;
+    const concurrency = assignment.concurrency || 1;
+    const runnerIds = [];
 
-    const pauseMs = Math.max(60000, Number(assignment.loop_pause_ms) || 300000);
-    const runner = this._createRunner({
-      id: runnerId,
-      projectId: project.id,
-      type: 'assignment-loop',
-      mode: 'loop',
-      label: `${agent.name} (loop)`,
-      intervalMs: pauseMs,
-      details: { assignmentId: assignment.id, agentId: assignment.id ? agent.id : null, agentName: agent.name }
-    });
+    for (let i = 0; i < concurrency; i++) {
+      const runnerId = `assignment:${assignment.id}:loop:${i}`;
+      if (this.runners.has(runnerId)) {
+        runnerIds.push(runnerId);
+        continue;
+      }
 
-    runner.promise = this._runLoop(
-      runner,
-      async () => {
-        const current = await getAssignment(assignment.id);
-        if (!current || !current.enabled) { runner.shouldStop = true; return; }
-        if (await isProjectLocked(project.id)) {
-          await sleepInterruptible(LOCK_WAIT_MS, () => runner.shouldStop);
-          return;
-        }
+      const pauseMs = Math.max(60000, Number(assignment.loop_pause_ms) || 300000);
+      const runner = this._createRunner({
+        id: runnerId,
+        projectId: project.id,
+        type: 'assignment-loop',
+        mode: 'loop',
+        label: `${agent.name} (loop ${i + 1}/${concurrency})`,
+        intervalMs: pauseMs,
+        details: { assignmentId: assignment.id, agentId: assignment.id ? agent.id : null, agentName: agent.name, index: i }
+      });
 
-        // Concurrency management — exclude self so the check counts OTHER runners only
-        const concurrency = current.concurrency || 1;
-        const currentRunning = Array.from(this.runners.values()).filter(r =>
-          r.id !== runner.id &&
-          r.type === 'assignment-loop' &&
-          r.details.assignmentId === assignment.id &&
-          r.status === 'running'
-        ).length;
+      runner.promise = this._runLoop(
+        runner,
+        async () => {
+          const current = await getAssignment(assignment.id);
+          if (!current || !current.enabled) { runner.shouldStop = true; return; }
+          if (await isProjectLocked(project.id)) {
+            await sleepInterruptible(LOCK_WAIT_MS, () => runner.shouldStop);
+            return;
+          }
 
-        if (currentRunning >= concurrency) {
-          await sleepInterruptible(10000, () => runner.shouldStop);
-          return;
-        }
+          await incrementTasks(project.id);
+          try {
+            const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
+            const intent = extractIntent(prompt);
 
-        await incrementTasks(project.id);
-        try {
-          const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
-          const intent = extractIntent(prompt);
+            const timeoutMs = 2 * 60 * 60 * 1000;
+            const startTime = Date.now();
 
-          // 2-hour timeout (in ms)
-          const timeoutMs = 2 * 60 * 60 * 1000;
-          const startTime = Date.now();
-
-          const result = await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
-            shouldStop: () => runner.shouldStop || (Date.now() - startTime > timeoutMs),
-            onTokenPicked: (info) => { runner.tokenInfo = info; },
-            onSessionCreated: async (sessionId) => {
-              runner.sessionId = sessionId;
-              await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId, tokenIndex: runner.tokenInfo?.index });
-              await createJournalEntry({ sessionId, assignmentId: assignment.id, projectId: project.id, agentName: agent.name, intent });
-            }
-          });
-          
-          if (Date.now() - startTime > timeoutMs) throw new Error('Session exceeded 2h timeout');
-
-          if (runner.sessionId) {
-            await recordAgentSessionEnd(runner.sessionId, 'completed');
-            await closeJournalEntry(runner.sessionId, {
-              status: 'completed',
-              summary: result ? 'Session terminée avec succès — PR créée et soumise pour merge.' : 'Session terminée — aucune PR créée.',
+            const result = await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
+              shouldStop: () => runner.shouldStop || (Date.now() - startTime > timeoutMs),
+              onTokenPicked: (info) => { runner.tokenInfo = info; },
+              onSessionCreated: async (sessionId) => {
+                runner.sessionId = sessionId;
+                await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId, tokenIndex: runner.tokenInfo?.index });
+                await createJournalEntry({ sessionId, assignmentId: assignment.id, projectId: project.id, agentName: agent.name, intent });
+              }
             });
-          }
-          await recordAssignmentRun(assignment.id);
-        } catch (err) {
-          if (runner.sessionId) {
-            await recordAgentSessionEnd(runner.sessionId, 'failed');
-            await closeJournalEntry(runner.sessionId, { status: 'failed', summary: `Erreur : ${err.message}` });
-          }
-          throw err;
-        } finally {
-          await decrementTasks(project.id);
-        }
-      },
-      pauseMs
-    );
+            
+            if (Date.now() - startTime > timeoutMs) throw new Error('Session exceeded 2h timeout');
 
-    return runnerId;
+            if (runner.sessionId) {
+              await recordAgentSessionEnd(runner.sessionId, 'completed');
+              await closeJournalEntry(runner.sessionId, {
+                status: 'completed',
+                summary: result ? 'Session terminée avec succès — PR créée et soumise pour merge.' : 'Session terminée — aucune PR créée.',
+              });
+            }
+            await recordAssignmentRun(assignment.id);
+          } catch (err) {
+            if (runner.sessionId) {
+              await recordAgentSessionEnd(runner.sessionId, 'failed');
+              await closeJournalEntry(runner.sessionId, { status: 'failed', summary: `Erreur : ${err.message}` });
+            }
+            throw err;
+          } finally {
+            await decrementTasks(project.id);
+          }
+        },
+        pauseMs
+      );
+      runnerIds.push(runnerId);
+    }
+
+    return runnerIds[0];
   }
 
   async _startAssignmentCron(assignment, agent, project) {
