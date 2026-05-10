@@ -1,10 +1,11 @@
 import { GLOBAL_CONFIG } from '../src/config.js';
-process.env.ORCHESTRATOR_DB_PATH = 'test-journal.db';
+process.env.ORCHESTRATOR_DB_PATH = `test-journal-${Date.now()}.db`;
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import {
   initTables,
   createJournalEntry,
@@ -107,4 +108,17 @@ test('Journal — listJournalByAssignment filtre par assignment_id', async () =>
 test('Journal — getJournalEntry retourne null pour session inconnue', async () => {
   const entry = await getJournalEntry('session-inexistante-xyz');
   assert.equal(entry, null);
+});
+
+test.after(async () => {
+  const dbPath = process.env.ORCHESTRATOR_DB_PATH;
+  if (dbPath) {
+    try {
+      await fs.unlink(dbPath);
+      await fs.unlink(`${dbPath}-wal`).catch(() => {});
+      await fs.unlink(`${dbPath}-shm`).catch(() => {});
+    } catch (e) {
+      // Ignore if file doesn't exist
+    }
+  }
 });
