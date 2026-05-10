@@ -8,6 +8,7 @@ import {
   listOpenPRs,
   getPRFiles,
 } from './api/githubClient.js';
+import { attemptMechanicalMerge } from './services/gitMergeService.js';
 import { formatIssueInstruction } from './agents/issueAgent.js';
 import {
   scheduleBuildAndMergePipeline,
@@ -26,6 +27,7 @@ import {
   getAllProjectStates,
 
   getAgent,
+  listAgents,
   listAssignments,
   getAssignment,
   listProjectsConfig,
@@ -44,6 +46,8 @@ import {
 import { recordDashboardMetric, getApiUsageSummary24h as getApiUsageSummary24hMem } from './services/metricsStore.js';
 import { sendOpsAlert } from './utils/alerting.js';
 import { getTokenStatusSummary } from './api/tokenRotation.js';
+import { buildContextBlock } from './utils/contextInjector.js';
+import { startPROutcomePoller } from './services/prOutcomePoller.js';
 
 const MAX_EVENTS = 300;
 const DEFAULT_BG_PAUSE_MS = 300000;
@@ -73,7 +77,8 @@ export class ControlCenter {
       staleCleanup: null,
       dbPruner: null,
       batchConflictResolvers: new Map(), // projectId -> cronTask
-      perProjectPipelines: new Map() // projectId -> cronTask
+      perProjectPipelines: new Map(), // projectId -> cronTask
+      prOutcomePoller: null
     };
     this.projectStats = new Map(); // projectId -> { openPRCount, lastUpdate }
     this.cache = {
@@ -147,8 +152,18 @@ export class ControlCenter {
         const scanProject = { ...project, githubToken: project.githubToken || masterToken };
         const prs = await listOpenPRs(scanProject);
         const dirty = prs.filter(pr => pr.mergeable === false && pr.mergeable_state === 'dirty');
-        if (dirty.length > 0) {
-          allConflictingPRs.push({ project: scanProject, prs: dirty });
+        
+        const stillDirty = [];
+        for (const pr of dirty) {
+          // Attempt mechanical resolution first (agent-less)
+          const resolved = await attemptMechanicalMerge(scanProject, pr.number);
+          if (!resolved) {
+            stillDirty.push(pr);
+          }
+        }
+
+        if (stillDirty.length > 0) {
+          allConflictingPRs.push({ project: scanProject, prs: stillDirty });
         }
       } catch (err) {
         this.log('error', `[BatchConflict] Failed to scan project ${project.id}`, { error: err.message });
@@ -157,8 +172,8 @@ export class ControlCenter {
 
     const totalConflicts = allConflictingPRs.reduce((sum, item) => sum + item.prs.length, 0);
     
-    if (totalConflicts < 3 && !force) {
-      this.log('info', `[BatchConflict] Only ${totalConflicts} conflict(s) found. Minimum 3 required to dispatch agent (unless forced). Skipping.`);
+    if (totalConflicts < 1 && !force) {
+      this.log('info', `[BatchConflict] No conflicts found. Skipping.`);
       return;
     }
 
@@ -170,41 +185,55 @@ export class ControlCenter {
       return;
     }
 
-    const batchPrompt = `
-# Mission : Résolution Batch des conflits de merge
+    // Try to find the "Merge Master" agent in the DB
+    const agents = await listAgents();
+    const mergeMasterAgent = agents.find(a => a.name.includes('Merge Master') || a.id === 19);
 
-Tu es l'agent de maintenance globale. Ta mission est de nettoyer les conflits de merge sur plusieurs projets pour débloquer le pipeline.
+    let batchPrompt = mergeMasterAgent?.prompt;
+
+    if (!batchPrompt) {
+      batchPrompt = `
+# Mission : Merge Master 🔀
+
+Tu es l'expert en résolution de conflits et gestion de Pull Requests. Ta mission est de débloquer les PRs en conflit et de les fusionner proprement.
 
 ## Projets à traiter :
 ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.githubRepo}): PRs #${item.prs.map(p => p.number).join(', #')}`).join('\n')}
 
----
+## Workflow de résolution
 
-## Pour chaque PR listée ci-dessus :
+### 1. Analyse
+- Liste les PRs ouvertes : \`gh pr list --json number,title,mergeable,headRefName,baseRefName\`
+- Identifie celles qui sont \`CONFLICTING\`.
 
-### 1. Analyse du conflit
-- Clone le repository.
-- Checkout la branche de la PR.
-- Tente un merge de la branche cible (généralement \`dev\` ou \`main\`).
-- **Règle des 50%** : Calcule le ratio \`(fichiers en conflit) / (total fichiers modifiés dans la PR)\`.
-- Si le ratio est > 50%, ABANDONNE cette PR (trop risqué) et passe à la suivante.
+### 2. Résolution pour chaque PR
+- **Checkout** : \`gh pr checkout <number>\`
+- **Merge base** : \`git fetch origin <baseRefName> && git merge origin/<baseRefName>\`
+- **Auto-résolution Markdown** : Pour les fichiers \`.md\`, accepte les deux côtés (concaténation) et retire les marqueurs.
+- **Résolution Code** :
+    - Analyse les conflits dans les fichiers de code.
+    - Préserve les correctifs de la PR tout en respectant l'architecture de la branche cible.
+- **Validation** : 
+    - Build : \`npm run build\` ou \`npx tsc --noEmit\`
+- **Commit** : \`git add . && git commit -m "chore: resolve merge conflicts and sync with base"\`
 
-### 2. Résolution
-- **Screenshots** : Si le conflit porte sur des fichiers dans \`agent-screenshots/\` ou \`screenshots/\`, utilise systématiquement la version de la branche source : \`git checkout --theirs <file>\`.
-- **Code** : Résous les conflits de code de manière logique en préservant les fonctionnalités.
-- **Validation** : Vérifie que le projet build toujours (\`npm run build\` ou \`npx tsc\`).
+### 3. Finalisation (Utilise l'API GitHub DIRECTEMENT)
+- **Push** : \`git push origin HEAD\`
+- **Merge** : 
+  \`gh pr merge <number> --merge --auto\`
+  *OU via API* :
+  \`curl -X PUT -H "Authorization: token $GITHUB_TOKEN" -d '{"merge_method":"merge"}' https://api.github.com/repos/:owner/:repo/pulls/:number/merge\`
 
-### 3. Livraison & Merge
-- Push les corrections sur la branche de la PR.
-- Utilise l'API GitHub (ou la commande \`gh pr merge\`) pour fusionner la PR si elle devient mergeable.
-
----
-
-## Rapport final
-À la fin de ta session, fournis un court résumé des PRs réparées et de celles abandonnées (avec la raison).
+## Règles d'Or
+1. **Risque** : Si plus de 50% des fichiers sont en conflit, ABANDONNE la PR.
+2. **Qualité** : Ne merge JAMAIS une PR qui ne build pas.
 `;
+    } else {
+      // Append the specific projects to the DB prompt
+      batchPrompt += `\n\n## Projets à traiter pour cette session :\n${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.githubRepo}): PRs #${item.prs.map(p => p.number).join(', #')}`).join('\n')}`;
+    }
 
-    await startAndMonitorSession(batchPrompt, 'Batch-Conflict-Resolver', resolverProject, {
+    await startAndMonitorSession(batchPrompt, 'Merge-Master', resolverProject, {
       onTokenPicked: (info) => {
         this.log('info', `[BatchConflict] Agent dispatched using token: ${info.label}`);
       }
@@ -687,6 +716,12 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       this.statsInterval = setInterval(recordMetrics, 5 * 60 * 1000);
     }
 
+    // PR outcome poller (every 15 minutes) — records merged/closed/open on journal entries
+    if (!this.systemRunners.prOutcomePoller) {
+      this.systemRunners.prOutcomePoller = startPROutcomePoller(this.projectById);
+      this.log('info', 'PR outcome poller started (15m interval)');
+    }
+
     // Auto-merge service (every 10 minutes)
     if (!this.systemRunners.autoMergeService) {
       this.systemRunners.autoMergeService = setInterval(() => this._autoMergeCycle(), 10 * 60 * 1000);
@@ -734,20 +769,34 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
   async _cleanupStaleSessions() {
     const STALE_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
     const cutoff = Date.now() - STALE_AGE_MS;
+    const now = Date.now();
 
-    // We'll mark them as failed in the DB so runners can move on
-    const { recordAgentSessionEnd, getAgentSessionsByStatus } = await import('./db/database.js');
+    const { executeWithRetry } = await import('./db/core.js');
 
-    const running = await getAgentSessionsByStatus('running');
-    for (const s of running) {
-      if (s.started_at < cutoff) {
-        this.log('warn', `[Cleanup] Marking stale session ${s.session_id} as failed (started ${new Date(s.started_at).toISOString()})`);
-        await recordAgentSessionEnd(s.session_id, 'failed');
-      }
+    // Use SQL directly: handles NULL started_at (old rows without this column) correctly
+    const r1 = await executeWithRetry({
+      sql: `UPDATE agent_sessions SET status = 'failed', ended_at = ?
+            WHERE status = 'running' AND (started_at < ? OR started_at IS NULL)`,
+      args: [now, cutoff],
+    });
+
+    // Also clean the journal — the previous version never touched this table
+    const r2 = await executeWithRetry({
+      sql: `UPDATE journal SET status = 'failed', ended_at = ?
+            WHERE status = 'running' AND (started_at < ? OR started_at IS NULL)`,
+      args: [now, cutoff],
+    });
+
+    if (r1.rowsAffected > 0 || r2.rowsAffected > 0) {
+      this.log('warn', `[Cleanup] Marked stale as failed — agent_sessions: ${r1.rowsAffected}, journal: ${r2.rowsAffected}`);
     }
   }
 
   async stopSchedulers() {
+    if (this.systemRunners.prOutcomePoller) {
+      clearInterval(this.systemRunners.prOutcomePoller);
+      this.systemRunners.prOutcomePoller = null;
+    }
     if (this.systemRunners.autoMergeService) {
       clearInterval(this.systemRunners.autoMergeService);
       this.systemRunners.autoMergeService = null;
@@ -875,22 +924,31 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
 
           await incrementTasks(project.id);
           try {
-            const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
-            const intent = extractIntent(prompt);
+            const rawPrompt = current.agent_id ? agent.prompt : current.custom_prompt;
+            const intent = extractIntent(rawPrompt);
+            const contextBlock = await buildContextBlock({
+              projectId: project.id,
+              agentName: agent.name,
+              instanceIndex: i,
+              totalInstances: concurrency,
+            });
+            const prompt = contextBlock + rawPrompt;
 
             const timeoutMs = 2 * 60 * 60 * 1000;
             const startTime = Date.now();
+            let capturedPrUrl = null;
 
             const result = await startAndMonitorSession(prompt, agent.name, await this.getProjectRuntime(project.id), {
               shouldStop: () => runner.shouldStop || (Date.now() - startTime > timeoutMs),
               onTokenPicked: (info) => { runner.tokenInfo = info; },
+              onPRCreated: ({ prUrl }) => { capturedPrUrl = prUrl; },
               onSessionCreated: async (sessionId) => {
                 runner.sessionId = sessionId;
                 await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId, tokenIndex: runner.tokenInfo?.index });
                 await createJournalEntry({ sessionId, assignmentId: assignment.id, projectId: project.id, agentName: agent.name, intent });
               }
             });
-            
+
             if (Date.now() - startTime > timeoutMs) throw new Error('Session exceeded 2h timeout');
 
             if (runner.sessionId) {
@@ -898,6 +956,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
               await closeJournalEntry(runner.sessionId, {
                 status: 'completed',
                 summary: result ? 'Session terminée avec succès — PR créée et soumise pour merge.' : 'Session terminée — aucune PR créée.',
+                prUrl: capturedPrUrl,
               });
             }
             await recordAssignmentRun(assignment.id);
@@ -946,12 +1005,16 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
       const currentProject = await this.getProjectRuntime(project.id);
       await incrementTasks(project.id);
       try {
-        const prompt = current.agent_id ? agent.prompt : current.custom_prompt;
-        const intent = extractIntent(prompt);
+        const rawPrompt = current.agent_id ? agent.prompt : current.custom_prompt;
+        const intent = extractIntent(rawPrompt);
+        const contextBlock = await buildContextBlock({ projectId: project.id, agentName: agent.name });
+        const prompt = contextBlock + rawPrompt;
+        let capturedPrUrl = null;
 
         const result = await startAndMonitorSession(prompt, agent.name, currentProject, {
           shouldStop: () => runner.shouldStop,
           onTokenPicked: (info) => { runner.tokenInfo = info; },
+          onPRCreated: ({ prUrl }) => { capturedPrUrl = prUrl; },
           onSessionCreated: async (id) => {
             runner.sessionId = id;
             await recordAgentSessionStart({ assignmentId: assignment.id, projectId: project.id, agentName: agent.name, sessionId: id, tokenIndex: runner.tokenInfo?.index });
@@ -963,6 +1026,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
           await closeJournalEntry(runner.sessionId, {
             status: 'completed',
             summary: result ? 'Session cron terminée — PR créée.' : 'Session cron terminée — aucune PR.',
+            prUrl: capturedPrUrl,
           });
         }
         await recordAssignmentRun(assignment.id);
@@ -1004,10 +1068,14 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
     runner.promise = (async () => {
       await incrementTasks(project.id);
       const intent = extractIntent(agent.prompt);
+      const contextBlock = await buildContextBlock({ projectId: project.id, agentName: agent.name });
+      const prompt = contextBlock + agent.prompt;
+      let capturedPrUrl = null;
       try {
-        const result = await startAndMonitorSession(agent.prompt, agent.name, project, {
+        const result = await startAndMonitorSession(prompt, agent.name, project, {
           shouldStop: () => runner.shouldStop,
           onTokenPicked: (info) => { runner.tokenInfo = info; },
+          onPRCreated: ({ prUrl }) => { capturedPrUrl = prUrl; },
           onSessionCreated: async (id) => {
             runner.sessionId = id;
             await recordAgentSessionStart({ assignmentId, projectId: project.id, agentName: agent.name, sessionId: id, tokenIndex: runner.tokenInfo?.index });
@@ -1019,6 +1087,7 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
           await closeJournalEntry(runner.sessionId, {
             status: 'completed',
             summary: result ? 'Run manuel terminé — PR créée.' : 'Run manuel terminé — aucune PR.',
+            prUrl: capturedPrUrl,
           });
         }
         await recordAssignmentRun(assignmentId);

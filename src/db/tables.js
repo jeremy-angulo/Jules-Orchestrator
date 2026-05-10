@@ -168,6 +168,7 @@ export async function initTables() {
     "ALTER TABLE projects_config ADD COLUMN build_pipeline_enabled BOOLEAN NOT NULL DEFAULT 0",
     "ALTER TABLE projects_config ADD COLUMN conflict_resolver_enabled BOOLEAN NOT NULL DEFAULT 0",
     "ALTER TABLE projects_config ADD COLUMN conflict_resolver_cron TEXT DEFAULT '0 18 * * *'",
+    "ALTER TABLE journal ADD COLUMN pr_status TEXT",
     "ALTER TABLE prompts ADD COLUMN prompt_name TEXT",
 
     "ALTER TABLE token_names ADD COLUMN id INTEGER",

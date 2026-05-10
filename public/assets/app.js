@@ -1048,7 +1048,7 @@ function renderPRList(projectId) {
         <th style="width:32px"><input type="checkbox" id="prSelectAllChk" title="Select all" ${allSelected ? 'checked' : ''} /></th>
         <th>#</th>
         <th>Title</th>
-        <th>Branch</th>
+        <th>Changes</th>
         <th>Author</th>
         <th>Status</th>
         <th>Age</th>
@@ -1105,7 +1105,7 @@ function createPRRow(pr, projectId) {
       <a href="${escapeHtml(pr.html_url)}" target="_blank" rel="noopener" class="pr-link pr-title">${escapeHtml(pr.title)}</a>
       ${statusText ? `<span class="pr-status-inline">${escapeHtml(statusText)}</span>` : ''}
     </td>
-    <td class="mono small muted">${escapeHtml(pr.head?.ref || '')}</td>
+    <td class="pr-changes-cell">${renderPRChanges(pr)}</td>
     <td class="muted small">${escapeHtml(pr.user?.login || '')}</td>
     <td>${mergeChip}</td>
     <td class="muted small">${fmtSince(pr.created_at)}</td>
@@ -1118,6 +1118,26 @@ function createPRRow(pr, projectId) {
   });
 
   return tr;
+}
+
+function renderPRChanges(pr) {
+  const parts = [];
+
+  const hasConflicts = pr.mergeable === false || pr.mergeable_state === 'dirty';
+  if (hasConflicts) {
+    parts.push('<span class="pr-change-conflict" title="This PR has merge conflicts">⚠ conflicts</span>');
+  }
+
+  if (pr.changed_files != null) {
+    parts.push(`<span class="pr-change-files" title="Files modified">${pr.changed_files} file${pr.changed_files !== 1 ? 's' : ''}</span>`);
+  }
+
+  if (pr.additions != null && pr.deletions != null) {
+    const total = pr.additions + pr.deletions;
+    parts.push(`<span class="pr-change-lines" title="Lines changed (+${pr.additions} / -${pr.deletions})">${total} lines</span>`);
+  }
+
+  return parts.length ? parts.join('<span class="pr-change-sep"> · </span>') : '<span class="muted small">—</span>';
 }
 
 function getMergeStatusChip(pr) {

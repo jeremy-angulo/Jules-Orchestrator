@@ -1539,6 +1539,13 @@ select.form-control {
 .chip-draft   { background: rgba(130,140,182,0.15);color: var(--muted); }
 .chip-unknown { background: rgba(130,140,182,0.1); color: var(--muted); }
 
+/* PR changes cell */
+.pr-changes-cell { white-space: nowrap; }
+.pr-change-conflict { font-size: 11px; font-weight: 600; color: #ff5050; }
+.pr-change-files    { font-size: 11px; color: var(--fg); }
+.pr-change-lines    { font-size: 11px; color: var(--muted); }
+.pr-change-sep      { color: var(--muted); font-size: 11px; }
+
 /* PR load status indicator */
 .pr-load-status { font-size: 13px; line-height: 1; transition: color 0.2s; }
 .pr-load-status.loading { color: var(--muted); animation: spin 1s linear infinite; display: inline-block; }

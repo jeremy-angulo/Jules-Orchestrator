@@ -193,7 +193,10 @@ export async function listOpenPRs(project) {
       updated_at: pr.updated_at,
       user: { login: pr.user?.login, avatar_url: pr.user?.avatar_url },
       head: { ref: pr.head?.ref },
-      base: { ref: pr.base?.ref }
+      base: { ref: pr.base?.ref },
+      additions: pr.additions ?? null,
+      deletions: pr.deletions ?? null,
+      changed_files: pr.changed_files ?? null,
     }));
   } catch (e) {
     return [];
