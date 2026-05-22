@@ -89,7 +89,9 @@ async function main() {
     page.on('console', msg => {
         if (msg.type() === 'error') {
             const text = msg.text();
-            if (text.includes('401') || text.includes('404')) return;
+            // Suppress expected Jules API auth errors during empirical test
+            if (text.includes('401') || text.includes('403') || text.includes('404')) return;
+            if (text.includes('UNAUTHENTICATED')) return;
             errors.push(`Console Error: ${text}`);
         } else {
             console.log(`[Browser]: ${msg.text()}`);
