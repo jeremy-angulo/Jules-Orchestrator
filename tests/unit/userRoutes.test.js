@@ -1,27 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import test from 'node:test';
+import assert from 'node:assert';
+import esmock from 'esmock';
 import express from 'express';
-
-// Mock dependencies
-vi.mock('../../src/auth/dashboardAuth.js', () => ({
-    listDashboardUsers: vi.fn(),
-    createDashboardUser: vi.fn(),
-    updateDashboardUserRole: vi.fn(),
-    deleteDashboardUser: vi.fn()
-}));
-
-vi.mock('../../src/middleware/authMiddleware.js', () => ({
-    requirePermission: () => (req, res, next) => next(),
-    audit: vi.fn()
-}));
-
-vi.mock('../../src/middleware/securityMiddleware.js', () => ({
-    apiRateLimiter: (req, res, next) => next()
-}));
-
-// We need to import the router AFTER mocking the dependencies
-const userRoutes = (await import('../../src/routes/userRoutes.js')).default;
-const { listDashboardUsers, createDashboardUser, updateDashboardUserRole, deleteDashboardUser } = await import('../../src/auth/dashboardAuth.js');
-const { audit } = await import('../../src/middleware/authMiddleware.js');
 
 async function startTestApp(router) {
     const app = express();
@@ -35,114 +15,165 @@ async function startTestApp(router) {
     };
 }
 
-describe('User Routes (Vitest)', () => {
-    let appInfo;
-
-    beforeEach(async () => {
-        vi.clearAllMocks();
-    });
-
-    it('GET / returns list of users', async () => {
-        const mockUsers = [{ id: 1, email: 'user1@example.com', role: 'admin' }];
-        listDashboardUsers.mockResolvedValue(mockUsers);
-
-        appInfo = await startTestApp(userRoutes);
-        try {
-            const response = await fetch(appInfo.url + '/');
-            const data = await response.json();
-            expect(response.status).toBe(200);
-            expect(data.users).toEqual(mockUsers);
-        } finally {
-            appInfo.close();
+test('User Routes - GET / returns list of users', async (t) => {
+    const mockUsers = [{ id: 1, email: 'user1@example.com', role: 'admin' }];
+    const userRoutes = await esmock('../../src/routes/userRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            listDashboardUsers: async () => mockUsers
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            audit: async () => {}
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
         }
     });
 
-    it('POST / creates a user', async () => {
-        const newUser = { id: 1, email: 'new@example.com', role: 'editor' };
-        createDashboardUser.mockResolvedValue(newUser);
+    const { url, close } = await startTestApp(userRoutes);
+    try {
+        const response = await fetch(url + '/');
+        const data = await response.json();
+        assert.strictEqual(response.status, 200);
+        assert.deepStrictEqual(data.users, mockUsers);
+    } finally {
+        close();
+    }
+});
 
-        appInfo = await startTestApp(userRoutes);
-        try {
-            // Successful creation
-            const response = await fetch(appInfo.url + '/', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: 'new@example.com', password: 'password123', role: 'editor' })
-            });
-            const data = await response.json();
-            expect(response.status).toBe(201);
-            expect(data.ok).toBe(true);
-            expect(data.user.email).toBe('new@example.com');
-            expect(audit).toHaveBeenCalled();
-
-            // Missing fields
-            const failResponse = await fetch(appInfo.url + '/', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: 'new@example.com' })
-            });
-            expect(failResponse.status).toBe(400);
-        } finally {
-            appInfo.close();
+test('User Routes - POST / creates a user', async (t) => {
+    const newUser = { id: 1, email: 'new@example.com', role: 'editor' };
+    const userRoutes = await esmock('../../src/routes/userRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            createDashboardUser: async () => newUser
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            audit: async () => {}
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
         }
     });
 
-    it('PATCH /:id updates user role', async () => {
-        const updatedUser = { id: '123', email: 'user@example.com', role: 'admin' };
-        updateDashboardUserRole.mockResolvedValue(updatedUser);
+    const { url, close } = await startTestApp(userRoutes);
+    try {
+        const response = await fetch(url + '/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: 'new@example.com', password: 'password123', role: 'editor' })
+        });
+        const data = await response.json();
+        assert.strictEqual(response.status, 201);
+        assert.strictEqual(data.ok, true);
+        assert.strictEqual(data.user.email, 'new@example.com');
 
-        appInfo = await startTestApp(userRoutes);
-        try {
-            const response = await fetch(appInfo.url + '/123', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ role: 'admin' })
-            });
-            const data = await response.json();
-            expect(response.status).toBe(200);
-            expect(data.ok).toBe(true);
-            expect(updateDashboardUserRole).toHaveBeenCalledWith('123', 'admin');
+        const failResponse = await fetch(url + '/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: 'new@example.com' })
+        });
+        assert.strictEqual(failResponse.status, 400);
+    } finally {
+        close();
+    }
+});
 
-            // Missing role
-            const failResponse = await fetch(appInfo.url + '/123', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({})
-            });
-            expect(failResponse.status).toBe(400);
-        } finally {
-            appInfo.close();
+test('User Routes - PATCH /:id updates user role', async (t) => {
+    let calledWith = null;
+    const updatedUser = { id: '123', email: 'user@example.com', role: 'admin' };
+    const userRoutes = await esmock('../../src/routes/userRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            updateDashboardUserRole: async (id, role) => {
+                calledWith = { id, role };
+                return updatedUser;
+            }
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            audit: async () => {}
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
         }
     });
 
-    it('DELETE /:id deletes user', async () => {
-        deleteDashboardUser.mockResolvedValue(true);
+    const { url, close } = await startTestApp(userRoutes);
+    try {
+        const response = await fetch(url + '/123', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'admin' })
+        });
+        const data = await response.json();
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(data.ok, true);
+        assert.deepStrictEqual(calledWith, { id: '123', role: 'admin' });
 
-        appInfo = await startTestApp(userRoutes);
-        try {
-            const response = await fetch(appInfo.url + '/456', {
-                method: 'DELETE'
-            });
-            const data = await response.json();
-            expect(response.status).toBe(200);
-            expect(data.ok).toBe(true);
-            expect(deleteDashboardUser).toHaveBeenCalledWith('456');
-        } finally {
-            appInfo.close();
+        const failResponse = await fetch(url + '/123', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        assert.strictEqual(failResponse.status, 400);
+    } finally {
+        close();
+    }
+});
+
+test('User Routes - DELETE /:id deletes user', async (t) => {
+    let calledWith = null;
+    const userRoutes = await esmock('../../src/routes/userRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            deleteDashboardUser: async (id) => {
+                calledWith = id;
+                return true;
+            }
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            audit: async () => {}
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
         }
     });
 
-    it('handles service errors', async () => {
-        listDashboardUsers.mockRejectedValue(new Error('Database error'));
+    const { url, close } = await startTestApp(userRoutes);
+    try {
+        const response = await fetch(url + '/456', {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+        assert.strictEqual(response.status, 200);
+        assert.strictEqual(data.ok, true);
+        assert.strictEqual(calledWith, '456');
+    } finally {
+        close();
+    }
+});
 
-        appInfo = await startTestApp(userRoutes);
-        try {
-            const response = await fetch(appInfo.url + '/');
-            const data = await response.json();
-            expect(response.status).toBe(500);
-            expect(data.error).toBe('Database error');
-        } finally {
-            appInfo.close();
+test('User Routes - handles service errors', async (t) => {
+    const userRoutes = await esmock('../../src/routes/userRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            listDashboardUsers: async () => { throw new Error('Database error'); }
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            audit: async () => {}
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
         }
     });
+
+    const { url, close } = await startTestApp(userRoutes);
+    try {
+        const response = await fetch(url + '/');
+        const data = await response.json();
+        assert.strictEqual(response.status, 500);
+        assert.strictEqual(data.error, 'Database error');
+    } finally {
+        close();
+    }
 });

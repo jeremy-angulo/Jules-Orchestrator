@@ -131,7 +131,6 @@ test('runBackgroundAgent calls startAndMonitorSession if not locked, and decreme
     '../src/utils/helpers.js': {
       sleep: async () => {
         sleepCalledCount++;
-        // This is the sleep inside the catch block. Throw to break the loop.
         throw new Error('BREAK_LOOP_ERROR');
       }
     }
