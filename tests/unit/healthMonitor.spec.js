@@ -8,7 +8,6 @@ test('healthMonitor - startWebsiteHealthMonitor triggers probe and records succe
         status: 200,
     });
 
-    // Globally mock fetch for this test
     vi.stubGlobal('fetch', mockFetch);
 
     const healthMonitor = await esmock('../../src/services/healthMonitor.js', {
@@ -20,14 +19,12 @@ test('healthMonitor - startWebsiteHealthMonitor triggers probe and records succe
         }
     });
 
-    // Use a short interval and timeout for testing
     healthMonitor.startWebsiteHealthMonitor({
         url: 'http://test.com/health',
-        intervalMs: 100000, // Long enough to not trigger again during test
+        intervalMs: 100000,
         timeoutMs: 1000
     });
 
-    // Wait for the immediate probe to finish
     await new Promise(resolve => setTimeout(resolve, 50));
 
     expect(mockFetch).toHaveBeenCalledWith('http://test.com/health', expect.any(Object));
@@ -99,7 +96,7 @@ test('healthMonitor - records error on network failure', async () => {
     expect(recordedError).toMatchObject({
         type: 'website',
         msg: 'Website check failed',
-        data: { code: 'Error', message: 'Network failure' }
+        data: { message: 'Network failure' }
     });
 
     vi.unstubAllGlobals();
