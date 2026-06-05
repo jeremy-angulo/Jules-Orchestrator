@@ -1,7 +1,7 @@
-import { test, expect } from 'vitest';
+import { test, expect, vi } from 'vitest';
 import esmock from 'esmock';
 
-test('githubService - getCachedPRs fetches and caches PRs (Vitest)', async () => {
+test('githubService - getCachedPRs fetches and caches PRs', async () => {
     let callCount = 0;
     const mockPrs = [{ number: 1, title: 'Test PR' }];
 
@@ -14,7 +14,7 @@ test('githubService - getCachedPRs fetches and caches PRs (Vitest)', async () =>
         }
     });
 
-    const project = { id: 'test-project-vitest' };
+    const project = { id: 'test-project-vitest-new' };
 
     // First call - should fetch
     const prs1 = await githubService.getCachedPRs(project);
@@ -27,7 +27,7 @@ test('githubService - getCachedPRs fetches and caches PRs (Vitest)', async () =>
     expect(prs2).toEqual(mockPrs);
 });
 
-test('githubService - getCachedPRs deduplicates inflight requests (Vitest)', async () => {
+test('githubService - getCachedPRs deduplicates inflight requests', async () => {
     let callCount = 0;
     const githubService = await esmock('../../src/services/githubService.js', {
         '../../src/api/githubClient.js': {
@@ -39,7 +39,7 @@ test('githubService - getCachedPRs deduplicates inflight requests (Vitest)', asy
         }
     });
 
-    const project = { id: 'test-project-inflight-vitest' };
+    const project = { id: 'test-project-inflight-vitest-new' };
 
     // Fire multiple requests simultaneously
     const [prs1, prs2] = await Promise.all([
@@ -51,7 +51,7 @@ test('githubService - getCachedPRs deduplicates inflight requests (Vitest)', asy
     expect(prs1).toEqual(prs2);
 });
 
-test('githubService - invalidatePRCache clears the cache (Vitest)', async () => {
+test('githubService - invalidatePRCache clears the cache', async () => {
     let callCount = 0;
     const githubService = await esmock('../../src/services/githubService.js', {
         '../../src/api/githubClient.js': {
@@ -62,7 +62,7 @@ test('githubService - invalidatePRCache clears the cache (Vitest)', async () => 
         }
     });
 
-    const project = { id: 'test-project-invalidate-vitest' };
+    const project = { id: 'test-project-invalidate-vitest-new' };
 
     await githubService.getCachedPRs(project);
     expect(callCount).toBe(1);
