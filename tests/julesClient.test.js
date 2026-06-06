@@ -13,10 +13,13 @@ const mockProject = {
   githubRepo: 'test/repo',
 };
 
-// We need to use esmock to load the modules with mocked sleep
+// We need to use esmock to load the modules with mocked sleep and token rotation
 const { julesAPI, startAndMonitorSession } = await esmock('../src/api/julesClient.js', {
   '../src/utils/helpers.js': {
     sleep: async () => Promise.resolve()
+  },
+  '../src/api/tokenRotation.js': {
+    getAvailableToken: async () => ({ token: 'test-token', index: 0, label: 'Test Token' })
   }
 });
 
