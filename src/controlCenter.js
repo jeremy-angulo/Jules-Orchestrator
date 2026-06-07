@@ -230,7 +230,37 @@ ${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.github
 `;
     } else {
       // Append the specific projects to the DB prompt
-      batchPrompt += `\n\n## Projets à traiter pour cette session :\n${allConflictingPRs.map(item => `- **${item.project.id}** (${item.project.githubRepo}): PRs #${item.prs.map(p => p.number).join(', #')}`).join('\n')}`;
+
+
+      // Append the specific projects to the DB prompt, ensuring no duplication
+      // First, group projects by ID
+      const groupedProjects = {};
+      for (const item of allConflictingPRs) {
+         if (!groupedProjects[item.project.id]) {
+            groupedProjects[item.project.id] = { project: item.project, prs: new Map() };
+         }
+         // Add PRs uniquely by number
+         for (const pr of item.prs) {
+            groupedProjects[item.project.id].prs.set(pr.number, pr);
+         }
+      }
+
+      // Format the unique list
+      const projectsList = Object.values(groupedProjects).map(item => {
+         const prsArray = Array.from(item.prs.values());
+         return `- **${item.project.id}** (${item.project.githubRepo}): PRs #${prsArray.map(p => p.number).join(', #')}`;
+      }).join('\n');
+
+      if (!batchPrompt.includes("## Projets à traiter pour cette session :")) {
+         batchPrompt += "\n\n## Projets à traiter pour cette session :\n" + projectsList;
+      } else {
+         // Replace the existing section if it exists, but preserve anything that might come after it
+         const parts = batchPrompt.split("## Projets à traiter pour cette session :");
+         batchPrompt = parts[0] + "## Projets à traiter pour cette session :\n" + projectsList;
+         // The prompt ends there, there's nothing after this section in the code right now.
+      }
+
+
     }
 
     await startAndMonitorSession(batchPrompt, 'Merge-Master', resolverProject, {
