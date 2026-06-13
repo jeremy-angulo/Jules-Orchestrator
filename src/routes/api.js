@@ -69,10 +69,21 @@ router.get(/^\/sessions\/(.*)/, requirePermission('dashboard.read'), async (req,
 
         // Try to find the session. We might not know the exact agent name, 
         // but getSession will try Jules API. 'System' is our default fallback.
-        const [session, activitiesRes] = await Promise.all([
-            getSession('System', sessionId).catch(() => null),
-            listActivities('System', sessionId, 100).catch(() => null),
-        ]);
+        let session, activitiesRes;
+        try {
+            [session, activitiesRes] = await Promise.all([
+                getSession('System', sessionId).catch(err => {
+                    if (err?.message === 'Not found') return null;
+                    throw err;
+                }),
+                listActivities('System', sessionId, 100).catch(err => {
+                    if (err?.message === 'Not found') return null;
+                    throw err;
+                }),
+            ]);
+        } catch (err) {
+            return res.status(500).json({ error: String(err?.message || err) });
+        }
 
         if (!session) return res.status(404).json({ error: 'Session not found' });
         res.status(200).json({ session, activities: activitiesRes?.activities || [] });
