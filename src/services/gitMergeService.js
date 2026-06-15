@@ -18,9 +18,9 @@ const execAsync = promisify(exec);
  * @returns {Promise<boolean>} True if successfully merged, false otherwise.
  */
 export async function attemptMechanicalMerge(project, prNumber) {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `jules-merge-${project.id}-${prNumber}-`));
-  
+  let tempDir;
   try {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `jules-merge-${project.id}-${prNumber}-`));
     log('info', `[MechanicalMerge] 🛠️ Attempting mechanical resolution for PR #${prNumber} in ${tempDir}`);
 
     const repoUrl = `https://x-access-token:${project.githubToken}@github.com/${project.githubRepo}.git`;
@@ -81,10 +81,12 @@ export async function attemptMechanicalMerge(project, prNumber) {
     log('error', `[MechanicalMerge] ❌ Failed during mechanical merge for PR #${prNumber}:`, error.message);
     return false;
   } finally {
-    try {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    } catch (e) {
-      // ignore
+    if (tempDir) {
+      try {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      } catch (e) {
+        // ignore
+      }
     }
   }
 }
