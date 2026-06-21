@@ -32,13 +32,13 @@ export async function getAssignment(id) {
 }
 
 export async function createAssignment(a) {
-  const rs = await executeWithRetry({ sql: 'INSERT INTO assignments (project_id, agent_id, mode, loop_pause_ms, cron_schedule, enabled, concurrency, created_at, updated_at, custom_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [a.project_id, a.agent_id, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled !== undefined ? (a.enabled ? 1 : 0) : 1, a.concurrency || 1, Date.now(), Date.now(), a.custom_prompt] });
+  const rs = await executeWithRetry({ sql: 'INSERT INTO assignments (project_id, agent_id, mode, loop_pause_ms, cron_schedule, enabled, concurrency, wait_for_pr_merge, created_at, updated_at, custom_prompt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [a.project_id, a.agent_id, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled !== undefined ? (a.enabled ? 1 : 0) : 1, a.concurrency || 1, a.wait_for_pr_merge ? 1 : 0, Date.now(), Date.now(), a.custom_prompt] });
   invalidateAssignmentCache(a.project_id);
   return rs.lastInsertRowid !== undefined ? Number(rs.lastInsertRowid) : null;
 }
 
 export async function updateAssignment(id, a) {
-  const rs = await executeWithRetry({ sql: 'UPDATE assignments SET agent_id=?, custom_prompt=?, mode=?, loop_pause_ms=?, cron_schedule=?, enabled=?, concurrency=?, updated_at=? WHERE id=? RETURNING project_id', args: [a.agent_id, a.custom_prompt, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled ? 1 : 0, a.concurrency || 1, Date.now(), id] });
+  const rs = await executeWithRetry({ sql: 'UPDATE assignments SET agent_id=?, custom_prompt=?, mode=?, loop_pause_ms=?, cron_schedule=?, enabled=?, concurrency=?, wait_for_pr_merge=?, updated_at=? WHERE id=? RETURNING project_id', args: [a.agent_id, a.custom_prompt, a.mode, a.loop_pause_ms, a.cron_schedule, a.enabled ? 1 : 0, a.concurrency || 1, a.wait_for_pr_merge ? 1 : 0, Date.now(), id] });
   invalidateAssignmentCache(rs.rows[0]?.project_id);
 }
 
