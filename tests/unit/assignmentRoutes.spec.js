@@ -53,17 +53,64 @@ test('Assignment Routes - GET / returns list of enriched assignments', async () 
     }
 });
 
+test('Assignment Routes - DELETE /:id stops and deletes', async () => {
+    const deleteAssignment = vi.fn();
+    const stopAssignment = vi.fn();
+    const _invalidateAssignmentsCache = vi.fn();
+    const audit = vi.fn();
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            deleteAssignment
+        },
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                stopAssignment,
+                _invalidateAssignmentsCache
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/789', {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(data.ok).toBe(true);
+        expect(stopAssignment).toHaveBeenCalledWith(789);
+        expect(deleteAssignment).toHaveBeenCalledWith(789);
+        expect(_invalidateAssignmentsCache).toHaveBeenCalled();
+        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.delete', '789');
+    } finally {
+        close();
+    }
+});
+
 test('Assignment Routes - POST / creates and starts an assignment', async () => {
     const mockAssignment = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 1, wait_for_pr_merge: 1 };
 
+    const createAssignment = vi.fn(async () => 123);
+    const getAssignment = vi.fn(async (id) => id === 123 ? mockAssignment : null);
     const startAssignment = vi.fn();
     const _invalidateAssignmentsCache = vi.fn();
     const audit = vi.fn();
 
     const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
         '../../src/db/database.js': {
-            createAssignment: vi.fn(async () => 123),
-            getAssignment: vi.fn(async (id) => id === 123 ? mockAssignment : null)
+            createAssignment,
+            getAssignment
         },
         '../../src/controlCenter.js': {
             controlCenter: {
@@ -96,6 +143,7 @@ test('Assignment Routes - POST / creates and starts an assignment', async () => 
         expect(data.ok).toBe(true);
         expect(data.assignment.id).toBe(123);
         expect(data.assignment.wait_for_pr_merge).toBe(1);
+        expect(createAssignment).toHaveBeenCalledWith(expect.objectContaining({ wait_for_pr_merge: true }));
         expect(startAssignment).toHaveBeenCalledWith(123);
         expect(_invalidateAssignmentsCache).toHaveBeenCalled();
         expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.create', '123', expect.anything());
@@ -144,7 +192,7 @@ test('Assignment Routes - PUT /:id updates and restarts', async () => {
         const data = await response.json();
 
         expect(response.status).toBe(200);
-        expect(updateAssignment).toHaveBeenCalled();
+        expect(updateAssignment).toHaveBeenCalledWith(456, expect.objectContaining({ wait_for_pr_merge: true }));
         expect(stopAssignment).toHaveBeenCalledWith(456);
         expect(startAssignment).toHaveBeenCalledWith(456);
     } finally {
