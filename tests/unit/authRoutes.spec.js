@@ -103,3 +103,67 @@ test('Auth Routes - /logout clears cookie', async () => {
     // Check if cookie is cleared (expires in the past)
     expect(response.headers['set-cookie'][0]).toContain('Expires=Thu, 01 Jan 1970 00:00:00 GMT');
 });
+
+test('Auth Routes - /bootstrap-admin creates first admin', async () => {
+    const mockUser = { id: 1, email: 'admin@example.com', role: 'admin' };
+    const authRoutes = await esmock('../../src/routes/authRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            hasAnyDashboardUser: async () => false,
+            createDashboardUser: async () => mockUser,
+            createDashboardSession: async () => ({ token: 'bootstrap-token', expiresAt: Date.now() + 10000 })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(authRoutes.default);
+    const response = await request(app)
+        .post('/bootstrap-admin')
+        .send({ email: 'admin@example.com', password: 'password' });
+
+    expect(response.status).toBe(201);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.user).toEqual(mockUser);
+    expect(response.headers['set-cookie']).toBeDefined();
+    expect(response.headers['set-cookie'][0]).toContain('orchestrator_session=bootstrap-token');
+});
+
+test('Auth Routes - /bootstrap-admin returns 409 if already setup', async () => {
+    const authRoutes = await esmock('../../src/routes/authRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            hasAnyDashboardUser: async () => true
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(authRoutes.default);
+    const response = await request(app)
+        .post('/bootstrap-admin')
+        .send({ email: 'admin@example.com', password: 'password' });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toBe('Setup already completed.');
+});
+
+test('Auth Routes - /bootstrap-admin returns 400 on error', async () => {
+    const authRoutes = await esmock('../../src/routes/authRoutes.js', {
+        '../../src/auth/dashboardAuth.js': {
+            hasAnyDashboardUser: async () => false,
+            createDashboardUser: async () => { throw new Error('Invalid email.'); }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(authRoutes.default);
+    const response = await request(app)
+        .post('/bootstrap-admin')
+        .send({ email: 'invalid', password: 'pw' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('Invalid email.');
+});
