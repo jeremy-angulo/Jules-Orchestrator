@@ -21,12 +21,12 @@ const PROJECT_PROMPT_KEYS = {
   }
 };
 
-function getProjectPrompt(projectId, promptName) {
+async function getProjectPrompt(projectId, promptName) {
   if (!promptName) return '';
-  return loadPrompt(projectId, promptName);
+  return await loadPrompt(projectId, promptName);
 }
 
-export function getProjectBackgroundPrompts(projectId) {
+export async function getProjectBackgroundPrompts(projectId) {
   const names = PROJECT_PROMPT_KEYS[projectId]?.background || [];
-  return names.map((name) => getProjectPrompt(projectId, name));
+  return Promise.all(names.map((name) => getProjectPrompt(projectId, name)));
 }

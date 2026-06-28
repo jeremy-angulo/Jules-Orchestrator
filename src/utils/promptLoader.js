@@ -5,9 +5,9 @@ import { getPrompt, upsertPrompt } from '../db/database.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function loadPrompt(project, name) {
+export async function loadPrompt(project, name) {
     const filePath = path.join(__dirname, '../../prompts', project, `${name}.md`);
-    const promptFromDb = getPrompt(project, name);
+    const promptFromDb = await getPrompt(project, name);
     if (promptFromDb && promptFromDb.content) {
         return promptFromDb.content;
     }
