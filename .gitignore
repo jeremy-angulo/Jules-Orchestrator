@@ -5,3 +5,4 @@ package-lock.json
 Design/
 tests/screenshots/
 *.log
+test-results/
