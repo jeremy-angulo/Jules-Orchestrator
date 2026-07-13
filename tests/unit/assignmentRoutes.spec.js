@@ -53,6 +53,72 @@ test('Assignment Routes - GET / returns list of enriched assignments', async () 
     }
 });
 
+test('Assignment Routes - POST /:id/run triggers one-shot run', async () => {
+    const runAssignmentOnce = vi.fn(async () => 'run-789');
+    const audit = vi.fn();
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                runAssignmentOnce
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/123/run', { method: 'POST' });
+        const data = await response.json();
+
+        expect(response.status).toBe(202);
+        expect(data.ok).toBe(true);
+        expect(data.runnerId).toBe('run-789');
+        expect(runAssignmentOnce).toHaveBeenCalledWith(123);
+        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.runOnce', '123', { runnerId: 'run-789' });
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST /:id/run handles errors', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                runAssignmentOnce: vi.fn(async () => { throw new Error('Run failed'); })
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/123/run', { method: 'POST' });
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Run failed');
+    } finally {
+        close();
+    }
+});
+
 test('Assignment Routes - DELETE /:id stops and deletes', async () => {
     const deleteAssignment = vi.fn();
     const stopAssignment = vi.fn();
