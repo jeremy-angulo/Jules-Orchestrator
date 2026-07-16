@@ -1,4 +1,4 @@
-import { test, expect, vi, beforeEach, afterEach } from 'vitest';
+import { test, expect, vi } from 'vitest';
 import esmock from 'esmock';
 
 test('prOutcomePoller - runPROutcomeCycle updates status to merged', async () => {
@@ -68,7 +68,6 @@ test('prOutcomePoller - runPROutcomeCycle updates status to closed', async () =>
     })));
 
     const projectById = new Map();
-    // No specific project config for p2 in map to test fallback or just standard behavior
 
     await prOutcomePoller.runPROutcomeCycle(projectById);
 
@@ -205,4 +204,114 @@ test('prOutcomePoller - runPROutcomeCycle uses master token fallback', async () 
             })
         })
     );
+});
+
+test('prOutcomePoller - startPROutcomePoller schedules cycles and handles errors', async () => {
+    vi.useFakeTimers();
+
+    let cycleCallCount = 0;
+    const logSpy = vi.fn();
+
+    const prOutcomePoller = await esmock('../../src/services/prOutcomePoller.js', {
+        '../../src/db/core.js': {
+            executeWithRetry: vi.fn().mockImplementation(async () => {
+                cycleCallCount++;
+                if (cycleCallCount === 1) {
+                    throw new Error('Immediate error');
+                }
+                return { rows: [] };
+            })
+        },
+        '../../src/utils/logger.js': {
+            log: logSpy
+        }
+    });
+
+    const projectById = new Map();
+    const intervalHandle = prOutcomePoller.startPROutcomePoller(projectById);
+
+    // Settle the immediate run without firing the 15m interval
+    await vi.advanceTimersByTimeAsync(10);
+
+    // Verify immediate call error was logged
+    expect(cycleCallCount).toBe(1);
+    expect(logSpy).toHaveBeenCalledWith('error', expect.stringContaining('Initial cycle failed: Immediate error'));
+
+    clearInterval(intervalHandle);
+    vi.useRealTimers();
+});
+
+test('prOutcomePoller - startPROutcomePoller triggers successfully on interval', async () => {
+    vi.useFakeTimers();
+
+    let selectQueryCount = 0;
+    const prOutcomePoller = await esmock('../../src/services/prOutcomePoller.js', {
+        '../../src/db/core.js': {
+            executeWithRetry: vi.fn(async (stmt) => {
+                if (stmt.sql && stmt.sql.includes('SELECT')) {
+                    selectQueryCount++;
+                }
+                return { rows: [] };
+            })
+        },
+        '../../src/utils/logger.js': {
+            log: vi.fn()
+        }
+    });
+
+    const projectById = new Map();
+    const intervalHandle = prOutcomePoller.startPROutcomePoller(projectById);
+
+    // Settle the initial immediate call (runs without advancing interval)
+    await vi.advanceTimersByTimeAsync(10);
+    expect(selectQueryCount).toBe(1);
+
+    // Advance by 15 minutes (POLL_INTERVAL_MS = 15 * 60 * 1000)
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+    expect(selectQueryCount).toBe(2);
+
+    // Advance by another 15 minutes
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+    expect(selectQueryCount).toBe(3);
+
+    clearInterval(intervalHandle);
+    vi.useRealTimers();
+});
+
+test('prOutcomePoller - startPROutcomePoller logs interval cycle failure', async () => {
+    vi.useFakeTimers();
+
+    const logSpy = vi.fn();
+    let isInitial = true;
+
+    const prOutcomePoller = await esmock('../../src/services/prOutcomePoller.js', {
+        '../../src/db/core.js': {
+            executeWithRetry: vi.fn(async () => {
+                if (isInitial) {
+                    isInitial = false;
+                    return { rows: [] }; // Initial call succeeds
+                }
+                throw new Error('Interval call failure'); // Interval call fails
+            })
+        },
+        '../../src/utils/logger.js': {
+            log: logSpy
+        }
+    });
+
+    const projectById = new Map();
+    const intervalHandle = prOutcomePoller.startPROutcomePoller(projectById);
+
+    // Settle initial immediate call
+    await vi.advanceTimersByTimeAsync(10);
+    expect(logSpy).not.toHaveBeenCalled();
+
+    // Advance by 15 minutes to trigger the interval call which should fail
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000);
+
+    // Verify interval cycle error was logged
+    expect(logSpy).toHaveBeenCalledWith('error', expect.stringContaining('Cycle failed: Interval call failure'));
+
+    clearInterval(intervalHandle);
+    vi.useRealTimers();
 });
