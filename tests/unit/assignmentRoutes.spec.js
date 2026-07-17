@@ -265,3 +265,289 @@ test('Assignment Routes - PUT /:id updates and restarts', async () => {
         close();
     }
 });
+
+test('Assignment Routes - POST /:id/toggle toggles assignment and handles start/stop', async () => {
+    let currentEnabled = true;
+    const mockAssignmentBefore = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 1 };
+    const mockAssignmentAfter = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 0 };
+
+    const toggleAssignment = vi.fn(async (id, enabled) => {
+        currentEnabled = enabled;
+    });
+    const stopAssignment = vi.fn();
+    const startAssignment = vi.fn();
+    const _invalidateAssignmentsCache = vi.fn();
+    const audit = vi.fn();
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            getAssignment: vi.fn(async (id) => currentEnabled ? mockAssignmentBefore : mockAssignmentAfter),
+            toggleAssignment
+        },
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                isAssignmentRunning: vi.fn(() => false),
+                _invalidateAssignmentsCache,
+                stopAssignment,
+                startAssignment
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        // Toggle from enabled (1) to disabled (0)
+        const response1 = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
+        const data1 = await response1.json();
+
+        expect(response1.status).toBe(200);
+        expect(data1.ok).toBe(true);
+        expect(toggleAssignment).toHaveBeenCalledWith(123, false);
+        expect(stopAssignment).toHaveBeenCalledWith(123);
+        expect(startAssignment).not.toHaveBeenCalled();
+        expect(_invalidateAssignmentsCache).toHaveBeenCalled();
+        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.toggle', '123', { enabled: false });
+
+        // Toggle from disabled (0) to enabled (1)
+        const response2 = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
+        const data2 = await response2.json();
+
+        expect(response2.status).toBe(200);
+        expect(data2.ok).toBe(true);
+        expect(toggleAssignment).toHaveBeenLastCalledWith(123, true);
+        expect(startAssignment).toHaveBeenCalledWith(123);
+        expect(audit).toHaveBeenLastCalledWith(expect.anything(), 'assignment.toggle', '123', { enabled: true });
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST /:id/stop stops assignment', async () => {
+    const stopAssignment = vi.fn();
+    const audit = vi.fn();
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                stopAssignment
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/999/stop', { method: 'POST' });
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(data.ok).toBe(true);
+        expect(stopAssignment).toHaveBeenCalledWith(999);
+        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.stop', '999');
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - GET /:id/journal returns assignment journal with custom limit', async () => {
+    const mockJournal = [
+        { id: 1, session_id: 's1', assignment_id: 123, project_id: 'p1', agent_name: 'a1', status: 'completed' }
+    ];
+    const listJournalByAssignment = vi.fn(async (id, limit) => {
+        expect(id).toBe(123);
+        expect(limit).toBe(50);
+        return mockJournal;
+    });
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            listJournalByAssignment
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/123/journal?limit=50');
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(data.journal).toEqual(mockJournal);
+        expect(listJournalByAssignment).toHaveBeenCalledWith(123, 50);
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST / handles database errors', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            createAssignment: vi.fn(async () => { throw new Error('Database create failure'); })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: 'p1', agent_id: 'a1' })
+        });
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Database create failure');
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST /:id/toggle handles database errors', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            getAssignment: vi.fn(async () => { throw new Error('Database read failure'); })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Database read failure');
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - PUT /:id handles database errors', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            getAssignment: vi.fn(async () => { throw new Error('Database update failure'); })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/456', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true })
+        });
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Database update failure');
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - DELETE /:id handles database errors', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                stopAssignment: vi.fn(async () => { throw new Error('ControlCenter stop failure'); })
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/789', {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('ControlCenter stop failure');
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - GET /:id/journal handles database errors', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            listJournalByAssignment: vi.fn(async () => { throw new Error('Database journal failure'); })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/123/journal');
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Database journal failure');
+    } finally {
+        close();
+    }
+});
