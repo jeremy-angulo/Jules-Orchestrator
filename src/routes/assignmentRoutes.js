@@ -80,10 +80,10 @@ router.put('/:id', apiRateLimiter, requirePermission('agents.control'), async (r
     const id = Number(req.params.id);
     const { agent_id, custom_prompt, mode, loop_pause_ms, cron_schedule, wait_for_pr_merge, enabled, concurrency } = req.body || {};
     
-    const current = await getAssignment(id);
-    if (!current) return res.status(404).json({ error: 'Assignment not found.' });
-
     try {
+        const current = await getAssignment(id);
+        if (!current) return res.status(404).json({ error: 'Assignment not found.' });
+
         await updateAssignment(id, {
             agent_id,
             custom_prompt,
