@@ -7,3 +7,4 @@ tests/screenshots/
 *.log
 test-results/
 playwright-report/
+coverage/
