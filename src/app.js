@@ -32,10 +32,14 @@ app.use(attachDashboardUser);
 app.use('/assets', express.static(path.join(publicDir, 'assets')));
 
 // 4. View Routes
-app.get('/', async (req, res) => {
-    if (!(await hasAnyDashboardUser())) return res.redirect('/login?setup=1');
-    if (!req.dashboardUser) return res.redirect('/login');
-    return res.redirect('/dashboard');
+app.get('/', async (req, res, next) => {
+    try {
+        if (!(await hasAnyDashboardUser())) return res.redirect('/login?setup=1');
+        if (!req.dashboardUser) return res.redirect('/login');
+        return res.redirect('/dashboard');
+    } catch (err) {
+        next(err);
+    }
 });
 
 app.get('/login', (req, res) => {
@@ -48,9 +52,13 @@ app.get('/dashboard', requireDashboardAuth, (req, res) => {
 });
 
 // Health check (Public)
-app.get('/health', async (req, res) => {
-    await recordServiceCheck('website', true, { statusCode: 200, responseMs: 0, source: 'external_hit' });
-    res.status(200).send('Orchestrator is alive');
+app.get('/health', async (req, res, next) => {
+    try {
+        await recordServiceCheck('website', true, { statusCode: 200, responseMs: 0, source: 'external_hit' });
+        res.status(200).send('Orchestrator is alive');
+    } catch (err) {
+        next(err);
+    }
 });
 
 // 5. Modular Routes
