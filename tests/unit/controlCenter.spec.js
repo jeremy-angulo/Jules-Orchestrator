@@ -11,6 +11,10 @@ describe('ControlCenter', () => {
   let mockMetrics;
   let mockTokenRotation;
   let mockPipeline;
+  let mockCron;
+  let mockSiteCheckService;
+  let mockContextInjector;
+  let mockHelpers;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -28,6 +32,16 @@ describe('ControlCenter', () => {
       listAgents: vi.fn().mockResolvedValue([]),
       listAssignments: vi.fn().mockResolvedValue([]),
       getAllProjectStates: vi.fn().mockResolvedValue([]),
+      getAgent: vi.fn(),
+      getAssignment: vi.fn(),
+      recordAssignmentRun: vi.fn(),
+      recordAgentSessionStart: vi.fn(),
+      recordAgentSessionEnd: vi.fn(),
+      getLastAgentSession: vi.fn().mockResolvedValue(null),
+      createJournalEntry: vi.fn(),
+      closeJournalEntry: vi.fn(),
+      getSiteCheckConfig: vi.fn(),
+      updateSiteCheckConfig: vi.fn(),
     };
 
     mockGithub = {
@@ -58,6 +72,23 @@ describe('ControlCenter', () => {
       runBuildAndMergePipelineOnce: vi.fn(),
     };
 
+    mockCron = {
+      schedule: vi.fn().mockReturnValue({ stop: vi.fn() }),
+      validate: vi.fn().mockReturnValue(true),
+    };
+
+    mockSiteCheckService = {
+      runSiteCheckCycle: vi.fn().mockImplementation(() => new Promise(() => {})), // never-resolving promise keeps it running
+    };
+
+    mockContextInjector = {
+      buildContextBlock: vi.fn().mockResolvedValue('MOCK CONTEXT:\n'),
+    };
+
+    mockHelpers = {
+      sleepInterruptible: vi.fn().mockResolvedValue(),
+    };
+
     ControlCenterModule = await esmock('../../src/controlCenter.js', {
       '../../src/db/database.js': mockDatabase,
       '../../src/api/julesClient.js': mockJules,
@@ -65,6 +96,10 @@ describe('ControlCenter', () => {
       '../../src/services/metricsStore.js': mockMetrics,
       '../../src/api/tokenRotation.js': mockTokenRotation,
       '../../src/agents/pipeline.js': mockPipeline,
+      'node-cron': mockCron,
+      '../../src/services/siteCheckService.js': mockSiteCheckService,
+      '../../src/utils/contextInjector.js': mockContextInjector,
+      '../../src/utils/helpers.js': mockHelpers,
     });
 
     controlCenter = new ControlCenterModule.ControlCenter();
@@ -309,5 +344,277 @@ describe('ControlCenter', () => {
 
     expect(mockPipeline.runBuildAndMergePipelineOnce).toHaveBeenCalledWith(expect.any(Object), expect.any(Object));
     expect(runner.status).toBe('completed');
+  });
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // NEW TEST CASES TO COVER REMAINING BLIND SPOTS
+  // ────────────────────────────────────────────────────────────────────────────
+
+  describe('getAgentsCached', () => {
+    it('should query the database once and cache consecutive requests', async () => {
+      const mockAgents = [{ id: 1, name: 'Agent 1' }];
+      mockDatabase.listAgents.mockResolvedValue(mockAgents);
+
+      const first = await controlCenter.getAgentsCached();
+      expect(first).toEqual(mockAgents);
+      expect(mockDatabase.listAgents).toHaveBeenCalledTimes(1);
+
+      const second = await controlCenter.getAgentsCached();
+      expect(second).toEqual(mockAgents);
+      expect(mockDatabase.listAgents).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Site Check Management', () => {
+    it('isSiteCheckRunning should return true if any site check runner exists', async () => {
+      expect(controlCenter.isSiteCheckRunning('p1')).toBe(false);
+
+      controlCenter._createRunner({
+        id: 'site-check:p1:0',
+        projectId: 'p1',
+        type: 'site-check',
+        mode: 'loop'
+      });
+
+      expect(controlCenter.isSiteCheckRunning('p1')).toBe(true);
+    });
+
+    it('startSiteCheck should throw error if site check is disabled', async () => {
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 0 });
+      await expect(controlCenter.startSiteCheck('p1')).rejects.toThrow('Site check is disabled for p1');
+    });
+
+    it('startSiteCheck should throw if project config is not found', async () => {
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 1 });
+      mockDatabase.getProjectConfig.mockResolvedValue(null);
+      await expect(controlCenter.startSiteCheck('p1')).rejects.toThrow('Project p1 not found');
+    });
+
+    it('startSiteCheck should initialize runners and call runSiteCheckCycle', async () => {
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 1, concurrency: 2, pauseMs: 1000, locale: 'en' });
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      const runnerIds = await controlCenter.startSiteCheck('p1');
+      expect(runnerIds).toEqual(['site-check:p1:0', 'site-check:p1:1']);
+      expect(controlCenter.runners.has('site-check:p1:0')).toBe(true);
+      expect(controlCenter.runners.has('site-check:p1:1')).toBe(true);
+      expect(mockSiteCheckService.runSiteCheckCycle).toHaveBeenCalledTimes(2);
+    });
+
+    it('stopSiteCheck should mark runners as stopped', async () => {
+      const runner = controlCenter._createRunner({
+        id: 'site-check:p1:0',
+        projectId: 'p1',
+        type: 'site-check',
+        mode: 'loop'
+      });
+      await controlCenter.stopSiteCheck('p1');
+      expect(runner.shouldStop).toBe(true);
+      expect(runner.status).toBe('stopped');
+    });
+
+    it('toggleSiteCheck should update config and start site check if enabled is true', async () => {
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 1, concurrency: 1, pauseMs: 1000, locale: 'fr' });
+
+      await controlCenter.toggleSiteCheck('p1', true, 'http://test.url', 1000, 'fr', 1);
+
+      expect(mockDatabase.updateSiteCheckConfig).toHaveBeenCalledWith('p1', {
+        enabled: true,
+        baseUrl: 'http://test.url',
+        pauseMs: 1000,
+        locale: 'fr',
+        concurrency: 1
+      });
+      expect(controlCenter.runners.has('site-check:p1:0')).toBe(true);
+    });
+
+    it('toggleSiteCheck should update config and stop site check if enabled is false', async () => {
+      const runner = controlCenter._createRunner({
+        id: 'site-check:p1:0',
+        projectId: 'p1',
+        type: 'site-check',
+        mode: 'loop'
+      });
+
+      await controlCenter.toggleSiteCheck('p1', false, 'http://test.url', 1000, 'fr', 1);
+
+      expect(mockDatabase.updateSiteCheckConfig).toHaveBeenCalledWith('p1', {
+        enabled: false,
+        baseUrl: 'http://test.url',
+        pauseMs: 1000,
+        locale: 'fr',
+        concurrency: 1
+      });
+      expect(runner.status).toBe('stopped');
+    });
+
+    it('startAllSiteChecks should start site check only for projects with site_check_enabled', async () => {
+      mockDatabase.listProjectsConfig.mockResolvedValue([
+        { id: 'p1', site_check_enabled: 1 },
+        { id: 'p2', site_check_enabled: 0 }
+      ]);
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      controlCenter.projectById.set('p1', mockProject);
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 1, concurrency: 1 });
+
+      await controlCenter.startAllSiteChecks();
+
+      expect(controlCenter.runners.has('site-check:p1:0')).toBe(true);
+      expect(controlCenter.runners.has('site-check:p2:0')).toBe(false);
+    });
+  });
+
+  describe('Assignment Execution', () => {
+    it('startAssignment with loop mode should create loop runner and execute successfully', async () => {
+      const mockAssignment = {
+        id: 101,
+        enabled: 1,
+        project_id: 'p1',
+        agent_id: 2,
+        mode: 'loop',
+        loop_pause_ms: 100,
+        concurrency: 1
+      };
+      const mockAgent = { id: 2, name: 'Agent 2', prompt: 'Prompt payload' };
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+
+      mockDatabase.getAssignment.mockResolvedValue(mockAssignment);
+      mockDatabase.getAgent.mockResolvedValue(mockAgent);
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      mockJules.startAndMonitorSession.mockImplementation(async (prompt, name, project, options) => {
+        if (options.onTokenPicked) options.onTokenPicked({ index: 0, label: 'test-token' });
+        if (options.onSessionCreated) await options.onSessionCreated('session-123');
+        if (options.onPRCreated) options.onPRCreated({ prUrl: 'https://github.com/pr/123' });
+
+        // Terminate runner loop immediately to prevent infinite runs
+        for (const r of controlCenter.runners.values()) {
+          r.shouldStop = true;
+        }
+        return true;
+      });
+
+      const runnerId = await controlCenter.startAssignment(101);
+      expect(runnerId).toBe('assignment:101:loop:0');
+
+      const runner = controlCenter.runners.get(runnerId);
+      expect(runner).toBeDefined();
+
+      await runner.promise;
+
+      expect(mockDatabase.recordAgentSessionStart).toHaveBeenCalled();
+      expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-123', 'completed');
+      expect(mockDatabase.recordAssignmentRun).toHaveBeenCalledWith(101);
+    });
+
+    it('startAssignment with cron mode should register cron job and let us trigger it', async () => {
+      const mockAssignment = {
+        id: 201,
+        enabled: 1,
+        project_id: 'p1',
+        agent_id: 2,
+        mode: 'scheduled',
+        cron_schedule: '0 0 * * *'
+      };
+      const mockAgent = { id: 2, name: 'Agent 2', prompt: 'Prompt' };
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+
+      mockDatabase.getAssignment.mockResolvedValue(mockAssignment);
+      mockDatabase.getAgent.mockResolvedValue(mockAgent);
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      let cronCallback;
+      mockCron.schedule.mockImplementation((sched, cb) => {
+        cronCallback = cb;
+        return { stop: vi.fn() };
+      });
+
+      const runnerId = await controlCenter.startAssignment(201);
+      expect(runnerId).toBe('assignment:201:cron');
+      expect(mockCron.schedule).toHaveBeenCalledWith('0 0 * * *', expect.any(Function));
+
+      mockJules.startAndMonitorSession.mockImplementation(async (prompt, name, project, options) => {
+        if (options.onSessionCreated) await options.onSessionCreated('session-cron');
+        return true;
+      });
+
+      await cronCallback();
+
+      expect(mockDatabase.recordAgentSessionStart).toHaveBeenCalled();
+      expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-cron', 'completed');
+    });
+
+    it('runAssignmentOnce should start one-off manual run', async () => {
+      const mockAssignment = { id: 301, project_id: 'p1', agent_id: 2 };
+      const mockAgent = { id: 2, name: 'Agent 2', prompt: 'Prompt once' };
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+
+      mockDatabase.getAssignment.mockResolvedValue(mockAssignment);
+      mockDatabase.getAgent.mockResolvedValue(mockAgent);
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      mockJules.startAndMonitorSession.mockImplementation(async (prompt, name, project, options) => {
+        if (options.onSessionCreated) await options.onSessionCreated('session-once');
+        return true;
+      });
+
+      const runnerId = await controlCenter.runAssignmentOnce(301);
+      expect(runnerId).toContain('assignment:301:manual');
+
+      const runner = controlCenter.runners.get(runnerId);
+      expect(runner).toBeDefined();
+
+      await runner.promise;
+
+      expect(runner.status).toBe('completed');
+      expect(mockDatabase.recordAgentSessionStart).toHaveBeenCalled();
+      expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-once', 'completed');
+    });
+
+    it('startAllAssignments should resume in-flight sessions', async () => {
+      const mockAssignments = [
+        { id: 401, enabled: 1, project_id: 'p1', agent_id: 2 },
+        { id: 402, enabled: 0, project_id: 'p1', agent_id: 2 }
+      ];
+      mockDatabase.listAssignments.mockResolvedValue(mockAssignments);
+
+      mockDatabase.getLastAgentSession.mockResolvedValue({
+        session_id: 'session-inflight',
+        status: 'running'
+      });
+
+      const mockAgent = { id: 2, name: 'Agent 2', prompt: 'Prompt' };
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+
+      mockDatabase.getAgent.mockResolvedValue(mockAgent);
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      mockJules.getSession.mockResolvedValue({ state: 'RUNNING' });
+
+      // Mock monitorExistingSession to immediately complete and prevent hanging loops
+      mockJules.monitorExistingSession.mockResolvedValue(true);
+
+      await controlCenter.startAllAssignments();
+
+      const resumeRunnerId = 'assignment:401:resume';
+      const resumeRunner = controlCenter.runners.get(resumeRunnerId);
+      expect(resumeRunner).toBeDefined();
+
+      await resumeRunner.promise;
+
+      expect(resumeRunner.status).toBe('completed');
+      expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-inflight', 'completed');
+    });
   });
 });
