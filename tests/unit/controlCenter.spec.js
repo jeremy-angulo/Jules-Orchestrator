@@ -15,6 +15,7 @@ describe('ControlCenter', () => {
   let mockSiteCheckService;
   let mockContextInjector;
   let mockHelpers;
+  let mockGitMergeService;
 
   beforeEach(async () => {
     vi.resetModules();
@@ -89,6 +90,10 @@ describe('ControlCenter', () => {
       sleepInterruptible: vi.fn().mockResolvedValue(),
     };
 
+    mockGitMergeService = {
+      attemptMechanicalMerge: vi.fn(),
+    };
+
     ControlCenterModule = await esmock('../../src/controlCenter.js', {
       '../../src/db/database.js': mockDatabase,
       '../../src/api/julesClient.js': mockJules,
@@ -100,6 +105,7 @@ describe('ControlCenter', () => {
       '../../src/services/siteCheckService.js': mockSiteCheckService,
       '../../src/utils/contextInjector.js': mockContextInjector,
       '../../src/utils/helpers.js': mockHelpers,
+      '../../src/services/gitMergeService.js': mockGitMergeService,
     });
 
     controlCenter = new ControlCenterModule.ControlCenter();
@@ -615,6 +621,150 @@ describe('ControlCenter', () => {
 
       expect(resumeRunner.status).toBe('completed');
       expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-inflight', 'completed');
+    });
+  });
+
+  describe('_batchConflictResolutionCycle', () => {
+    it('should skip dispatching agent if no conflicts found and force is false', async () => {
+      mockDatabase.listProjectsConfig.mockResolvedValue([
+        { id: 'p1', github_repo: 'org/repo1' }
+      ]);
+      await controlCenter.init();
+
+      mockGithub.listOpenPRs.mockResolvedValue([
+        { number: 1, mergeable: true, mergeable_state: 'clean' }
+      ]);
+
+      await controlCenter._batchConflictResolutionCycle('p1', false);
+
+      expect(mockGithub.listOpenPRs).toHaveBeenCalled();
+      expect(mockGitMergeService.attemptMechanicalMerge).not.toHaveBeenCalled();
+      expect(mockJules.startAndMonitorSession).not.toHaveBeenCalled();
+    });
+
+    it('should call attemptMechanicalMerge for dirty PRs and skip agent if resolved', async () => {
+      mockDatabase.listProjectsConfig.mockResolvedValue([
+        { id: 'p1', github_repo: 'org/repo1' }
+      ]);
+      await controlCenter.init();
+
+      mockGithub.listOpenPRs.mockResolvedValue([
+        { number: 42, mergeable: false, mergeable_state: 'dirty' }
+      ]);
+      mockGitMergeService.attemptMechanicalMerge.mockResolvedValue(true); // resolved mechanically
+
+      await controlCenter._batchConflictResolutionCycle('p1', false);
+
+      expect(mockGitMergeService.attemptMechanicalMerge).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'p1' }),
+        42
+      );
+      expect(mockJules.startAndMonitorSession).not.toHaveBeenCalled();
+    });
+
+    it('should dispatch agent with fallback prompt if mechanical merge fails and agent not in DB', async () => {
+      const mockProjects = [
+        { id: 'p1', github_repo: 'org/repo1' },
+        { id: 'Jules-Orchestrator', github_repo: 'org/orchestrator', githubToken: 'master-token' }
+      ];
+      mockDatabase.listProjectsConfig.mockResolvedValue(mockProjects);
+      await controlCenter.init();
+
+      mockGithub.listOpenPRs.mockResolvedValue([
+        { number: 42, mergeable: false, mergeable_state: 'dirty' }
+      ]);
+      mockGitMergeService.attemptMechanicalMerge.mockResolvedValue(false); // unresolved
+      mockDatabase.listAgents.mockResolvedValue([]); // No agent
+
+      await controlCenter._batchConflictResolutionCycle('p1', false);
+
+      expect(mockJules.startAndMonitorSession).toHaveBeenCalledWith(
+        expect.stringContaining('## Projets à traiter :'),
+        'Merge-Master',
+        expect.objectContaining({ id: 'p1' }),
+        expect.any(Object)
+      );
+      // Fallback prompt check
+      const promptArg = mockJules.startAndMonitorSession.mock.calls[0][0];
+      expect(promptArg).toContain('- **p1** (org/repo1): PRs #42');
+    });
+
+    it('should dispatch agent and append projects section to agent prompt when found in DB', async () => {
+      const mockProjects = [
+        { id: 'p1', github_repo: 'org/repo1' }
+      ];
+      mockDatabase.listProjectsConfig.mockResolvedValue(mockProjects);
+      await controlCenter.init();
+
+      mockGithub.listOpenPRs.mockResolvedValue([
+        { number: 42, mergeable: false, mergeable_state: 'dirty' }
+      ]);
+      mockGitMergeService.attemptMechanicalMerge.mockResolvedValue(false);
+
+      const mockMergeAgent = { id: 19, name: 'Merge Master Agent', prompt: 'Merge master core prompt' };
+      mockDatabase.listAgents.mockResolvedValue([mockMergeAgent]);
+
+      await controlCenter._batchConflictResolutionCycle('p1', false);
+
+      const promptArg = mockJules.startAndMonitorSession.mock.calls[0][0];
+      expect(promptArg).toContain('Merge master core prompt');
+      expect(promptArg).toContain('## Projets à traiter pour cette session :');
+      expect(promptArg).toContain('- **p1** (org/repo1): PRs #42');
+    });
+
+    it('should handle replacing existing projets section in agent prompt', async () => {
+      const mockProjects = [
+        { id: 'p1', github_repo: 'org/repo1' }
+      ];
+      mockDatabase.listProjectsConfig.mockResolvedValue(mockProjects);
+      await controlCenter.init();
+
+      mockGithub.listOpenPRs.mockResolvedValue([
+        { number: 42, mergeable: false, mergeable_state: 'dirty' }
+      ]);
+      mockGitMergeService.attemptMechanicalMerge.mockResolvedValue(false);
+
+      const mockMergeAgent = {
+        id: 19,
+        name: 'Merge Master Agent',
+        prompt: 'Merge master prompt\n## Projets à traiter pour cette session :\n- **OldProject** (org/old): PRs #99'
+      };
+      mockDatabase.listAgents.mockResolvedValue([mockMergeAgent]);
+
+      await controlCenter._batchConflictResolutionCycle('p1', false);
+
+      const promptArg = mockJules.startAndMonitorSession.mock.calls[0][0];
+      expect(promptArg).toContain('Merge master prompt');
+      expect(promptArg).not.toContain('OldProject');
+      expect(promptArg).toContain('## Projets à traiter pour cette session :');
+      expect(promptArg).toContain('- **p1** (org/repo1): PRs #42');
+    });
+
+    it('should gracefully continue scanning projects if one of them fails', async () => {
+      const mockProjects = [
+        { id: 'p1', github_repo: 'org/repo1' },
+        { id: 'p2', github_repo: 'org/repo2' }
+      ];
+      mockDatabase.listProjectsConfig.mockResolvedValue(mockProjects);
+      await controlCenter.init();
+
+      mockGithub.listOpenPRs.mockImplementation(async (project) => {
+        if (project.id === 'p1') {
+          throw new Error('Github rate limit');
+        }
+        return [{ number: 99, mergeable: false, mergeable_state: 'dirty' }];
+      });
+      mockGitMergeService.attemptMechanicalMerge.mockResolvedValue(false);
+
+      await controlCenter._batchConflictResolutionCycle('p2', false);
+
+      // Should still dispatch agent for p2
+      expect(mockJules.startAndMonitorSession).toHaveBeenCalledWith(
+        expect.stringContaining('- **p2** (org/repo2): PRs #99'),
+        'Merge-Master',
+        expect.objectContaining({ id: 'p2' }),
+        expect.any(Object)
+      );
     });
   });
 });
