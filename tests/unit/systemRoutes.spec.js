@@ -169,3 +169,176 @@ test('System Routes - GET /runners/:runnerId/session returns session info', asyn
     expect(response.body.session).toEqual(mockSession);
     expect(response.body.activities).toEqual(mockActivities.activities);
 });
+
+// New tests targeting identified untested logic/endpoints:
+
+test('System Routes - POST /start starts all schedulers', async () => {
+    let startAllCalled = false;
+    let auditCalledWith = null;
+
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                startAll: async () => { startAllCalled = true; }
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            audit: async (req, action, target) => { auditCalledWith = { action, target }; }
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).post('/start');
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(startAllCalled).toBe(true);
+    expect(auditCalledWith).toEqual({ action: 'system.start', target: 'all' });
+});
+
+test('System Routes - POST /stop stops all schedulers', async () => {
+    let stopAllCalled = false;
+    let auditCalledWith = null;
+
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                stopAll: async () => { stopAllCalled = true; }
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: async (req, action, target) => { auditCalledWith = { action, target }; }
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).post('/stop');
+
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(stopAllCalled).toBe(true);
+    expect(auditCalledWith).toEqual({ action: 'system.stop', target: 'all' });
+});
+
+test('System Routes - GET /logs returns system events', async () => {
+    const mockEvents = [{ at: Date.now(), level: 'info', message: 'Hello' }];
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                getStatus: async () => ({ events: mockEvents })
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/logs');
+
+    expect(response.status).toBe(200);
+    expect(response.body.logs).toEqual(mockEvents);
+});
+
+test('System Routes - GET /audit-events lists audit logs', async () => {
+    const mockEvents = [{ id: 1, action: 'test' }];
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/db/database.js': {
+            listAuditEvents: async (hours, limit) => {
+                expect(hours).toBe(48);
+                expect(limit).toBe(50);
+                return mockEvents;
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/audit-events?hours=48&limit=50');
+
+    expect(response.status).toBe(200);
+    expect(response.body.events).toEqual(mockEvents);
+});
+
+test('System Routes - GET /analytics/metrics lists metrics', async () => {
+    const mockSeries = { active_runners: [] };
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/services/metricsStore.js': {
+            listDashboardMetricsBatch: async (keys, hours) => {
+                expect(keys).toEqual(['active_runners', 'active_tasks', 'locked_projects']);
+                expect(hours).toBe(12);
+                return mockSeries;
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/analytics/metrics?hours=12');
+
+    expect(response.status).toBe(200);
+    expect(response.body.hours).toBe(12);
+    expect(response.body.series).toEqual(mockSeries);
+});
+
+test('System Routes - PUT /token-names/:tokenIndex returns 400 when customName is missing', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app)
+        .put('/token-names/1')
+        .send({});
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe('Custom name required');
+});
+
+test('System Routes - GET /keys returns key summary status', async () => {
+    const mockSummary = { keys: [] };
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/api/tokenRotation.js': {
+            getTokenStatusSummary: async () => mockSummary
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/keys');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(mockSummary);
+});
