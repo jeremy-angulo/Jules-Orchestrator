@@ -50,6 +50,88 @@ test('Site Check Routes - GET / returns config and stats', async () => {
     }
 });
 
+test('Site Check Routes - handles errors on toggle', async () => {
+    const siteCheckRoutes = await esmock('../../src/routes/siteCheckRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                toggleSiteCheck: async () => { throw new Error('Toggle Error'); }
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const { url, close } = await startTestApp(siteCheckRoutes.default);
+    try {
+        const response = await fetch(url + '/projects/test-proj/site-check/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true })
+        });
+        const data = await response.json();
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Toggle Error');
+    } finally {
+        close();
+    }
+});
+
+test('Site Check Routes - handles errors on GET /pages', async () => {
+    const siteCheckRoutes = await esmock('../../src/routes/siteCheckRoutes.js', {
+        '../../src/db/database.js': {
+            listSitePages: async () => { throw new Error('Pages Error'); }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const { url, close } = await startTestApp(siteCheckRoutes.default);
+    try {
+        const response = await fetch(url + '/projects/test-proj/site-check/pages');
+        const data = await response.json();
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Pages Error');
+    } finally {
+        close();
+    }
+});
+
+test('Site Check Routes - handles errors on release-locks', async () => {
+    const siteCheckRoutes = await esmock('../../src/routes/siteCheckRoutes.js', {
+        '../../src/db/database.js': {
+            releaseStaleSitePageLocks: async () => { throw new Error('Release Error'); }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const { url, close } = await startTestApp(siteCheckRoutes.default);
+    try {
+        const response = await fetch(url + '/projects/test-proj/site-check/release-locks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ maxAgeMinutes: 30 })
+        });
+        const data = await response.json();
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Release Error');
+    } finally {
+        close();
+    }
+});
+
 test('Site Check Routes - POST /toggle updates config and toggles runner', async () => {
     let toggleCalled = false;
     let auditCalled = false;

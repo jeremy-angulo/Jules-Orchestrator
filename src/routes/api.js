@@ -44,16 +44,6 @@ router.use('/jules', julesRoutes);
 router.use('/users', userRoutes);
 router.use('/', systemRoutes);
 
-// Helper
-async function getProjectOrFail(projectId, res) {
-    const project = await controlCenter.getProjectRuntime(projectId);
-    if (!project) {
-        res.status(404).json({ error: `Unknown project: ${projectId}` });
-        return null;
-    }
-    return project;
-}
-
 // ==========================================
 // JULES & SESSIONS
 // ==========================================
