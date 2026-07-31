@@ -158,3 +158,135 @@ test('api.js - handles errors in session retrieval', async () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('API Error');
 });
+
+test('api.js - handles Not Found error in listActivities but successful session retrieval', async () => {
+    const mockSession = { id: 'test-session', status: 'COMPLETED' };
+    const targetPath = resolve(__dirname, '../../src/routes/api.js');
+
+    const apiRouter = await esmock(targetPath, {
+        [resolve(__dirname, '../../src/api/julesClient.js')]: {
+            getSession: vi.fn(async () => mockSession),
+            listActivities: vi.fn(async () => {
+                throw new Error('Not found');
+            }),
+        },
+        [resolve(__dirname, '../../src/api/githubClient.js')]: {
+            mergeOpenPRs: vi.fn(),
+            closePR: vi.fn(),
+            mergePRWithResult: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/services/githubService.js')]: {
+            getCachedPRs: vi.fn(),
+            invalidatePRCache: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/db/database.js')]: {
+            listAgentSessions: vi.fn(),
+            upsertProjectConfig: vi.fn(),
+            getProjectConfig: vi.fn(),
+            deleteProjectConfig: vi.fn(),
+            deleteAssignmentsByProject: vi.fn(),
+            listAssignments: vi.fn(),
+            toggleAssignment: vi.fn(),
+            createAssignment: vi.fn(),
+            deleteAssignment: vi.fn(),
+            listAgents: vi.fn(),
+            getAgent: vi.fn(),
+            createAgent: vi.fn(),
+            updateAgent: vi.fn(),
+            deleteAgent: vi.fn(),
+            reorderAgents: vi.fn(),
+            listAuditEvents: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/api/tokenRotation.js')]: {
+            getTokenStatusSummary: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/middleware/securityMiddleware.js')]: {
+            apiRateLimiter: (req, res, next) => next(),
+        },
+        [resolve(__dirname, '../../src/middleware/authMiddleware.js')]: {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: async () => {},
+        },
+        [resolve(__dirname, '../../src/routes/projectRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/agentRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/assignmentRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/systemRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/julesRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/userRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/siteCheckRoutes.js')]: express.Router(),
+    });
+
+    const app = express();
+    app.use('/api', apiRouter);
+
+    const res = await request(app).get('/api/sessions/test-session');
+    expect(res.status).toBe(200);
+    expect(res.body.session).toEqual(mockSession);
+    expect(res.body.activities).toEqual([]);
+});
+
+test('api.js - handles generic error in listActivities', async () => {
+    const targetPath = resolve(__dirname, '../../src/routes/api.js');
+
+    const apiRouter = await esmock(targetPath, {
+        [resolve(__dirname, '../../src/api/julesClient.js')]: {
+            getSession: vi.fn(async () => ({ id: 'test' })),
+            listActivities: vi.fn(async () => {
+                throw new Error('Generic Activity Error');
+            }),
+        },
+        [resolve(__dirname, '../../src/api/githubClient.js')]: {
+            mergeOpenPRs: vi.fn(),
+            closePR: vi.fn(),
+            mergePRWithResult: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/services/githubService.js')]: {
+            getCachedPRs: vi.fn(),
+            invalidatePRCache: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/db/database.js')]: {
+            listAgentSessions: vi.fn(),
+            upsertProjectConfig: vi.fn(),
+            getProjectConfig: vi.fn(),
+            deleteProjectConfig: vi.fn(),
+            deleteAssignmentsByProject: vi.fn(),
+            listAssignments: vi.fn(),
+            toggleAssignment: vi.fn(),
+            createAssignment: vi.fn(),
+            deleteAssignment: vi.fn(),
+            listAgents: vi.fn(),
+            getAgent: vi.fn(),
+            createAgent: vi.fn(),
+            updateAgent: vi.fn(),
+            deleteAgent: vi.fn(),
+            reorderAgents: vi.fn(),
+            listAuditEvents: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/api/tokenRotation.js')]: {
+            getTokenStatusSummary: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/middleware/securityMiddleware.js')]: {
+            apiRateLimiter: (req, res, next) => next(),
+        },
+        [resolve(__dirname, '../../src/middleware/authMiddleware.js')]: {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: async () => {},
+        },
+        [resolve(__dirname, '../../src/routes/projectRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/agentRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/assignmentRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/systemRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/julesRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/userRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/siteCheckRoutes.js')]: express.Router(),
+    });
+
+    const app = express();
+    app.use('/api', apiRouter);
+
+    const res = await request(app).get('/api/sessions/test-session');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Generic Activity Error');
+});

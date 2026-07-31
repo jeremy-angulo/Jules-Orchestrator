@@ -342,3 +342,63 @@ test('System Routes - GET /keys returns key summary status', async () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual(mockSummary);
 });
+
+test('System Routes - GET /health-status handles errors with 500', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/services/metricsStore.js': {
+            getServiceErrorSummary: async () => { throw new Error('Metrics Fail'); }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/health-status');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Metrics Fail');
+});
+
+test('System Routes - GET /keys handles errors with 500', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/api/tokenRotation.js': {
+            getTokenStatusSummary: async () => { throw new Error('Keys Fail'); }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/keys');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Keys Fail');
+});
+
+test('System Routes - GET /token-names handles errors with 500', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/db/database.js': {
+            listTokenNames: async () => { throw new Error('Token Names Fail'); }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/token-names');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Token Names Fail');
+});

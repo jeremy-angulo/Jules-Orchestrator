@@ -107,3 +107,55 @@ test('User Routes - handles service errors with 500', async () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('DB Fail');
 });
+
+test('User Routes - POST / handles service errors with 500', async () => {
+    const router = await setupRouter({
+        dashboardAuth: { createDashboardUser: vi.fn(async () => { throw new Error('Create Fail'); }) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app)
+        .post('/users')
+        .send({ email: 'new@ex.com', password: 'pwd', role: 'editor' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Create Fail');
+});
+
+test('User Routes - PATCH /:id returns 400 when role is missing', async () => {
+    const router = await setupRouter();
+    const app = createApp(router);
+
+    const res = await request(app)
+        .patch('/users/123')
+        .send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Role required');
+});
+
+test('User Routes - PATCH /:id handles service errors with 500', async () => {
+    const router = await setupRouter({
+        dashboardAuth: { updateDashboardUserRole: vi.fn(async () => { throw new Error('Update Fail'); }) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app)
+        .patch('/users/123')
+        .send({ role: 'admin' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Update Fail');
+});
+
+test('User Routes - DELETE /:id handles service errors with 500', async () => {
+    const router = await setupRouter({
+        dashboardAuth: { deleteDashboardUser: vi.fn(async () => { throw new Error('Delete Fail'); }) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app).delete('/users/123');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Delete Fail');
+});
