@@ -78,18 +78,40 @@ test('metricsStore - getServiceUptime with 0 records fallback', async () => {
 
 test('metricsStore - dashboard metrics and batching', async () => {
     const key = 'test-metric-vitest-' + Date.now();
+    const key2 = 'test-metric-vitest-2-' + Date.now();
 
     await metricsStore.recordDashboardMetric(key, 42);
     await metricsStore.recordDashboardMetric(key, 84);
+    await metricsStore.recordDashboardMetric(key2, 100);
 
     const metrics = await metricsStore.listDashboardMetrics(key, 1);
     expect(metrics.length).toBe(2);
     expect(metrics[0].value).toBe(42);
     expect(metrics[1].value).toBe(84);
 
-    const batch = await metricsStore.listDashboardMetricsBatch([key], 1);
+    const batch = await metricsStore.listDashboardMetricsBatch([key, key2], 1);
     expect(batch[key]).toBeDefined();
     expect(batch[key].length).toBe(2);
+    expect(batch[key2]).toBeDefined();
+    expect(batch[key2].length).toBe(1);
+    expect(batch[key2][0].value).toBe(100);
+});
+
+test('metricsStore - listServiceErrors with limits and sorting', async () => {
+    const serviceId = 'limit-service-' + Date.now();
+
+    // Record 5 service errors
+    for (let i = 1; i <= 5; i++) {
+        await metricsStore.recordServiceError(serviceId, `Err ${i}`);
+    }
+
+    // listServiceErrors(serviceId, hours = 24, limit = 50)
+    const errors = await metricsStore.listServiceErrors(serviceId, 1, 3);
+    expect(errors.length).toBe(3);
+    // Should be in reverse order (newest first)
+    expect(errors[0].error_message).toBe('Err 5');
+    expect(errors[1].error_message).toBe('Err 4');
+    expect(errors[2].error_message).toBe('Err 3');
 });
 
 test('metricsStore - ring buffer capping and drop-oldest behavior', async () => {
