@@ -29,6 +29,7 @@ const setupPipeline = async () => {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
 });
 
 test('scheduleBuildAndMergePipeline - returns null if no pipeline config', async () => {
@@ -103,13 +104,6 @@ test('runBuildAndMergePipelineOnce - handles session failure and retries', async
 test('runBuildAndMergePipelineOnce - phase feedback', async () => {
     const { runBuildAndMergePipelineOnce } = await setupPipeline();
 
-    // Simulate being in wrap-up phase (elapsed > 1.5h)
-    // The code calculates elapsed as Date.now() - pipelineStartTime.
-    // We can use vi.setSystemTime if we need precise control,
-    // but the code doesn't inject startTime, it sets it at start.
-    // However, it's a while loop.
-
-    // For simplicity, let's just verify the default work phase call
     const project = {
         id: 'p1',
         buildAndMergePipeline: { prompt: 'fix it' }
@@ -123,4 +117,140 @@ test('runBuildAndMergePipelineOnce - phase feedback', async () => {
         project,
         expect.objectContaining({ feedbackMessage: 'keep going' })
     );
+});
+
+test('runBuildAndMergePipelineOnce - waits active tasks timeout (1h) and triggers onTimeout', async () => {
+    const { runBuildAndMergePipelineOnce } = await setupPipeline();
+    // Keep active tasks > 0 so the wait loop runs
+    mockDb.getActiveTasks.mockResolvedValue(1);
+
+    const project = {
+        id: 'p1',
+        buildAndMergePipeline: { prompt: 'fix it' }
+    };
+
+    const onTimeoutSpy = vi.fn();
+
+    await runBuildAndMergePipelineOnce(project, { onTimeout: onTimeoutSpy });
+
+    // The loop iterates 240 times (3600s / 15s) calling sleep(15000) each time
+    expect(mockSleep).toHaveBeenCalledTimes(241); // 240 times in wait loop, 1 time for sleep(10000) after timeout
+    expect(mockDb.lockProject).toHaveBeenCalledWith('p1', 'pipeline-timeout');
+    expect(onTimeoutSpy).toHaveBeenCalledWith('p1');
+});
+
+test('runBuildAndMergePipelineOnce - shouldStop stops during active tasks waiting', async () => {
+    const { runBuildAndMergePipelineOnce } = await setupPipeline();
+    mockDb.getActiveTasks.mockResolvedValue(1);
+
+    const project = {
+        id: 'p1',
+        buildAndMergePipeline: { prompt: 'fix it' }
+    };
+
+    const shouldStop = vi.fn().mockReturnValue(true);
+
+    await runBuildAndMergePipelineOnce(project, { shouldStop });
+
+    expect(mockSleep).not.toHaveBeenCalled();
+    expect(mockDb.incrementTasks).not.toHaveBeenCalled();
+    expect(mockStartAndMonitorSession).not.toHaveBeenCalled();
+});
+
+test('runBuildAndMergePipelineOnce - shouldStop stops during loop phase', async () => {
+    const { runBuildAndMergePipelineOnce } = await setupPipeline();
+    mockDb.getActiveTasks.mockResolvedValue(0);
+
+    const project = {
+        id: 'p1',
+        buildAndMergePipeline: { prompt: 'fix it' }
+    };
+
+    const shouldStop = vi.fn().mockReturnValue(true);
+
+    await runBuildAndMergePipelineOnce(project, { shouldStop });
+
+    expect(mockStartAndMonitorSession).not.toHaveBeenCalled();
+    expect(mockSleep).not.toHaveBeenCalled();
+});
+
+test('runBuildAndMergePipelineOnce - wrap-up phase feedback and project lock', async () => {
+    const { runBuildAndMergePipelineOnce } = await setupPipeline();
+    mockDb.getActiveTasks.mockResolvedValue(0);
+    mockStartAndMonitorSession.mockResolvedValue(true);
+
+    const project = {
+        id: 'p1',
+        buildAndMergePipeline: { prompt: 'fix it' }
+    };
+
+    const nowSpy = vi.spyOn(Date, 'now');
+    const start = 1000000000000;
+    const elapsed = 1.6 * 60 * 60 * 1000; // 1.6h elapsed (wrap-up is between 1.5h and 2.0h)
+
+    nowSpy.mockReturnValueOnce(start)
+          .mockReturnValueOnce(start + elapsed);
+
+    await runBuildAndMergePipelineOnce(project);
+
+    expect(mockDb.lockProject).toHaveBeenCalledWith('p1', 'pipeline-wrapup');
+    expect(mockStartAndMonitorSession).toHaveBeenCalledWith(
+        'fix it',
+        'Pipeline Agent',
+        project,
+        expect.objectContaining({
+            feedbackMessage: expect.stringContaining('Time is almost up. Please wrap up')
+        })
+    );
+});
+
+test('runBuildAndMergePipelineOnce - buffer phase feedback and project lock', async () => {
+    const { runBuildAndMergePipelineOnce } = await setupPipeline();
+    mockDb.getActiveTasks.mockResolvedValue(0);
+    mockStartAndMonitorSession.mockResolvedValue(true);
+
+    const project = {
+        id: 'p1',
+        buildAndMergePipeline: { prompt: 'fix it' }
+    };
+
+    const nowSpy = vi.spyOn(Date, 'now');
+    const start = 1000000000000;
+    const elapsed = 2.1 * 60 * 60 * 1000; // 2.1h elapsed (buffer phase is > 2.0h)
+
+    nowSpy.mockReturnValueOnce(start)
+          .mockReturnValueOnce(start + elapsed);
+
+    await runBuildAndMergePipelineOnce(project);
+
+    expect(mockDb.lockProject).toHaveBeenCalledWith('p1', 'pipeline-buffer');
+    expect(mockStartAndMonitorSession).toHaveBeenCalledWith(
+        'fix it',
+        'Pipeline Agent',
+        project,
+        expect.objectContaining({
+            feedbackMessage: expect.stringContaining('FINAL CALL: Finish now')
+        })
+    );
+});
+
+test('runBuildAndMergePipelineOnce - total global 3-hour timeout stops loop', async () => {
+    const { runBuildAndMergePipelineOnce } = await setupPipeline();
+    mockDb.getActiveTasks.mockResolvedValue(0);
+
+    const project = {
+        id: 'p1',
+        buildAndMergePipeline: { prompt: 'fix it' }
+    };
+
+    const nowSpy = vi.spyOn(Date, 'now');
+    const start = 1000000000000;
+    const elapsed = 3.1 * 60 * 60 * 1000; // 3.1h elapsed (> 3h total timeout)
+
+    nowSpy.mockReturnValueOnce(start)
+          .mockReturnValueOnce(start + elapsed);
+
+    await runBuildAndMergePipelineOnce(project);
+
+    expect(mockStartAndMonitorSession).not.toHaveBeenCalled();
 });
