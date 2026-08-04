@@ -184,12 +184,15 @@ test('runBuildAndMergePipelineOnce - wrap-up phase feedback and project lock', a
         buildAndMergePipeline: { prompt: 'fix it' }
     };
 
-    const nowSpy = vi.spyOn(Date, 'now');
     const start = 1000000000000;
     const elapsed = 1.6 * 60 * 60 * 1000; // 1.6h elapsed (wrap-up is between 1.5h and 2.0h)
 
-    nowSpy.mockReturnValueOnce(start)
-          .mockReturnValueOnce(start + elapsed);
+    let callCount = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return start;
+        return start + elapsed;
+    });
 
     await runBuildAndMergePipelineOnce(project);
 
@@ -214,12 +217,15 @@ test('runBuildAndMergePipelineOnce - buffer phase feedback and project lock', as
         buildAndMergePipeline: { prompt: 'fix it' }
     };
 
-    const nowSpy = vi.spyOn(Date, 'now');
     const start = 1000000000000;
     const elapsed = 2.1 * 60 * 60 * 1000; // 2.1h elapsed (buffer phase is > 2.0h)
 
-    nowSpy.mockReturnValueOnce(start)
-          .mockReturnValueOnce(start + elapsed);
+    let callCount = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return start;
+        return start + elapsed;
+    });
 
     await runBuildAndMergePipelineOnce(project);
 
@@ -243,12 +249,15 @@ test('runBuildAndMergePipelineOnce - total global 3-hour timeout stops loop', as
         buildAndMergePipeline: { prompt: 'fix it' }
     };
 
-    const nowSpy = vi.spyOn(Date, 'now');
     const start = 1000000000000;
     const elapsed = 3.1 * 60 * 60 * 1000; // 3.1h elapsed (> 3h total timeout)
 
-    nowSpy.mockReturnValueOnce(start)
-          .mockReturnValueOnce(start + elapsed);
+    let callCount = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return start;
+        return start + elapsed;
+    });
 
     await runBuildAndMergePipelineOnce(project);
 

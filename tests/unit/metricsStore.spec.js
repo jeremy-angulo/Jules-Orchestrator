@@ -128,3 +128,24 @@ test('metricsStore - ring buffer capping and drop-oldest behavior', async () => 
     expect(metrics[0].value).toBe(5);
     expect(metrics[999].value).toBe(1004);
 });
+
+test('metricsStore - default parameters for helper functions', async () => {
+    const serviceId = 'test-defaults-service-' + Date.now();
+
+    // Record an error
+    await metricsStore.recordServiceError(serviceId, 'Some default error');
+
+    // 1. getServiceErrorSummary default hours = 24
+    const summary = await metricsStore.getServiceErrorSummary(serviceId);
+    expect(summary.errors).toBe(1);
+    expect(summary.windowHours).toBe(24);
+
+    // 2. listServiceErrors default hours = 24, limit = 50
+    const errors = await metricsStore.listServiceErrors(serviceId);
+    expect(errors.length).toBe(1);
+    expect(errors[0].error_message).toBe('Some default error');
+
+    // 3. getServiceUptime default hours = 24
+    const uptime = await metricsStore.getServiceUptime(serviceId);
+    expect(uptime.uptimePercent).toBe(0);
+});
