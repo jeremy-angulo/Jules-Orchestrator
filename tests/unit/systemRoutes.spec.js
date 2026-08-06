@@ -402,3 +402,212 @@ test('System Routes - GET /token-names handles errors with 500', async () => {
     expect(response.status).toBe(500);
     expect(response.body.error).toBe('Token Names Fail');
 });
+
+// Additional Coverage Tests
+
+test('System Routes - GET /runners/:runnerId/session runner not found', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                runners: new Map(),
+                getRunnerSnapshot: () => { throw new Error('Should not be called'); }
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/runners/unknown-runner/session');
+
+    expect(response.status).toBe(404);
+    expect(response.body.error).toBe('Runner not found.');
+});
+
+test('System Routes - GET /runners/:runnerId/session when sessionId is missing', async () => {
+    const mockRunner = { details: { agentName: 'TestAgent' } };
+    const snapshot = { id: 'r1', sessionId: null };
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                runners: new Map([['r1', mockRunner]]),
+                getRunnerSnapshot: () => snapshot
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/runners/r1/session');
+
+    expect(response.status).toBe(200);
+    expect(response.body.runner).toEqual(snapshot);
+    expect(response.body.session).toBeNull();
+    expect(response.body.activities).toEqual([]);
+});
+
+test('System Routes - GET /runners/:runnerId/session handling getSession / listActivities errors gracefully', async () => {
+    const mockRunner = { details: { agentName: 'TestAgent' } };
+    const snapshot = { id: 'r1', sessionId: 's1' };
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                runners: new Map([['r1', mockRunner]]),
+                getRunnerSnapshot: () => snapshot
+            }
+        },
+        '../../src/api/julesClient.js': {
+            getSession: async () => { throw new Error('Client getSession error'); },
+            listActivities: async () => { throw new Error('Client listActivities error'); }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/runners/r1/session');
+
+    // It catches errors and still returns a 200 with runner details, but session/activities are null/empty, or returns the error message
+    expect(response.status).toBe(200);
+    expect(response.body.runner).toEqual(snapshot);
+});
+
+test('System Routes - POST /runners/:runnerId/stop returns 404 when runner not found', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                stopRunner: async () => false
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).post('/runners/unknown/stop');
+
+    expect(response.status).toBe(404);
+    expect(response.body.error).toBe('Runner not found.');
+});
+
+test('System Routes - POST /start returns 500 on startAll error', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                startAll: async () => { throw new Error('Failed to start control center'); }
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).post('/start');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Failed to start control center');
+});
+
+test('System Routes - POST /stop returns 500 on stopAll error', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                stopAll: async () => { throw new Error('Failed to stop control center'); }
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).post('/stop');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Failed to stop control center');
+});
+
+test('System Routes - GET /status returns 500 on getStatus error', async () => {
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                getStatus: async () => { throw new Error('Failed to get status'); }
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response = await request(app).get('/status');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Failed to get status');
+});
+
+test('System Routes - GET /health-status serves cached response if cached within threshold', async () => {
+    let callCount = 0;
+    const systemRoutes = await esmock('../../src/routes/systemRoutes.js', {
+        '../../src/services/metricsStore.js': {
+            getServiceErrorSummary: async () => {
+                callCount++;
+                return { errors: 0 };
+            },
+            listServiceChecks: async () => [{ ok: true, responseMs: 50, timestamp: Date.now() }],
+            listServiceErrors: async () => [],
+            getServiceUptime: async () => ({ uptimePercent: 100 })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(systemRoutes.default);
+    const response1 = await request(app).get('/health-status?hours=1');
+    const response2 = await request(app).get('/health-status?hours=1');
+
+    expect(response1.status).toBe(200);
+    expect(response2.status).toBe(200);
+    // Since each `await esmock(...)` imports its own fresh isolated module instance with reset top-level variables,
+    // we need to call the SAME app instance router to hit the cache of the same module instance!
+    // Our test is indeed doing this (app.get twice on the same app).
+    // Let's check why callCount is 3. Ah! It's because there are 3 buildService calls inside GET /health-status!
+    // Each service buildService('github_api'), buildService('jules_api'), buildService('website') triggers getServiceErrorSummary!
+    // So the first request calls it 3 times (callCount becomes 3).
+    // The second request uses the cache, so it doesn't call getServiceErrorSummary again.
+    // Therefore, callCount remains 3!
+    expect(callCount).toBe(3);
+});
