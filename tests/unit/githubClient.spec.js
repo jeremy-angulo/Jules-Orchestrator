@@ -209,6 +209,24 @@ test('mergePRWithResult - conflict', async () => {
     expect(result.reason).toContain('Merge conflicts');
 });
 
+test('mergePRWithResult - API error (not 405)', async () => {
+    const fetchMock = vi.fn(async (url) => {
+        if (url.endsWith('/pulls/1')) return { ok: true, json: async () => ({ number: 1, mergeable: true, state: 'open' }) };
+        if (url.endsWith('/merge')) return {
+            ok: false,
+            status: 403,
+            text: async () => 'Forbidden: Rate limit exceeded'
+        };
+        return { ok: false };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const githubClient = await setupGithubClient();
+    const result = await githubClient.mergePRWithResult(mockProject, 1);
+    expect(result.status).toBe('failed');
+    expect(result.reason).toBe('403: Forbidden: Rate limit exceeded');
+});
+
 test('getPRFiles - success', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({
         ok: true,
@@ -219,6 +237,27 @@ test('getPRFiles - success', async () => {
     const files = await githubClient.getPRFiles(mockProject, 1);
     expect(files).toHaveLength(1);
     expect(files[0].filename).toBe('test.js');
+});
+
+test('getPRFiles - failure (not ok response)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+        ok: false,
+        status: 500
+    })));
+
+    const githubClient = await setupGithubClient();
+    const files = await githubClient.getPRFiles(mockProject, 1);
+    expect(files).toEqual([]);
+});
+
+test('getPRFiles - network error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => {
+        throw new Error('Network failure');
+    }));
+
+    const githubClient = await setupGithubClient();
+    const files = await githubClient.getPRFiles(mockProject, 1);
+    expect(files).toEqual([]);
 });
 
 test('mergeOpenPRs - calls checkAndMergePR for each open PR', async () => {

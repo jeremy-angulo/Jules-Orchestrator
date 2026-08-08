@@ -108,6 +108,36 @@ describe('dashboardAuth', () => {
       expect(user).toBeNull();
     });
 
+    it('should return null if password hash does not contain scrypt format', async () => {
+      vi.mocked(db.findUserByEmail).mockResolvedValue({
+        email: 'test@example.com',
+        password_hash: 'bcrypt$salt$hash'
+      });
+
+      const user = await authenticateDashboardUser('test@example.com', 'password');
+      expect(user).toBeNull();
+    });
+
+    it('should return null if password hash is missing parts', async () => {
+      vi.mocked(db.findUserByEmail).mockResolvedValue({
+        email: 'test@example.com',
+        password_hash: 'scrypt$only_salt'
+      });
+
+      const user = await authenticateDashboardUser('test@example.com', 'password');
+      expect(user).toBeNull();
+    });
+
+    it('should return null if password hash is null or empty', async () => {
+      vi.mocked(db.findUserByEmail).mockResolvedValue({
+        email: 'test@example.com',
+        password_hash: null
+      });
+
+      const user = await authenticateDashboardUser('test@example.com', 'password');
+      expect(user).toBeNull();
+    });
+
     it('should return user if password correct', async () => {
       const salt = crypto.randomBytes(16).toString('hex');
       const key = crypto.scryptSync('correct-password', salt, 64).toString('hex');

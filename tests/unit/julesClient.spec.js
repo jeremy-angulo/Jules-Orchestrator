@@ -313,5 +313,48 @@ describe('julesClient.js', () => {
                 body: JSON.stringify({ prompt: 'keep going' })
             }));
         });
+
+        it('should schedule checkAndMergePR when onPRCreated is not provided', async () => {
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'https://github.com/org/repo/pull/789' } }] }) });
+
+            // Setup checkAndMergePR mock to reject to also cover the catch block in setTimeout
+            mockGithubClient.checkAndMergePR.mockRejectedValueOnce(new Error('Auto-merge failed'));
+
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
+            expect(result).toBe(true);
+
+            // Verify it has not been called yet before 60s
+            expect(mockGithubClient.checkAndMergePR).not.toHaveBeenCalled();
+
+            // Advance timers by 60s
+            await vi.advanceTimersByTimeAsync(60000);
+
+            // Verify it was scheduled and called with correct parameters
+            expect(mockGithubClient.checkAndMergePR).toHaveBeenCalledWith(mockProject, '789');
+        });
+
+        it('should handle malformed PR URLs gracefully', async () => {
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'https://github.com/malformed-url' } }] }) });
+
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
+            expect(result).toBe(true); // Should still return true since a PR was detected, even if URL is malformed
+
+            // Advance timers to verify checkAndMergePR is NOT scheduled or called since match failed
+            await vi.advanceTimersByTimeAsync(60000);
+            expect(mockGithubClient.checkAndMergePR).not.toHaveBeenCalled();
+        });
+
+        it('should return false if session completes successfully but no PR was created', async () => {
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [] }) });
+
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
+            expect(result).toBe(false);
+        });
     });
 });
