@@ -1,11 +1,12 @@
+import './setup-env.js';
 import { GLOBAL_CONFIG } from '../src/config.js';
-process.env.ORCHESTRATOR_DB_PATH = 'test-agents.db';
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 import test from 'node:test';
 import assert from 'node:assert';
 import cron from 'node-cron';
 import esmock from 'esmock';
+import fs from 'node:fs/promises';
 import * as db from '../src/db/database.js';
 
 test('scheduleBuildAndMergePipeline - handles errors gracefully', async (t) => {
@@ -127,4 +128,17 @@ test('scheduleBuildAndMergePipeline - skips PR if session fails', async (t) => {
   assert.strictEqual(sessionCallCount, 2, 'Should have retried session creation');
   assert.strictEqual(mergeCalled, true, 'Should have called merge after retry success');
   assert.strictEqual(await db.isProjectLocked('test-pipeline-2'), false);
+});
+
+test.after(async () => {
+  const dbPath = process.env.ORCHESTRATOR_DB_PATH;
+  if (dbPath) {
+    try {
+      await fs.unlink(dbPath);
+      await fs.unlink(`${dbPath}-wal`).catch(() => {});
+      await fs.unlink(`${dbPath}-shm`).catch(() => {});
+    } catch (e) {
+      // Ignore if file doesn't exist
+    }
+  }
 });

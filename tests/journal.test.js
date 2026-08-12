@@ -1,6 +1,5 @@
+import './setup-env.js';
 import { GLOBAL_CONFIG } from '../src/config.js';
-import crypto from 'node:crypto';
-process.env.ORCHESTRATOR_DB_PATH = `test-journal-${Date.now()}-${process.pid}-${crypto.randomBytes(4).toString('hex')}.db`;
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 

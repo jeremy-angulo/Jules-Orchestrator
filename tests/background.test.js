@@ -1,10 +1,11 @@
+import './setup-env.js';
 import { GLOBAL_CONFIG } from '../src/config.js';
-process.env.ORCHESTRATOR_DB_PATH = 'test-bg.db';
 GLOBAL_CONFIG.JULES_MAIN_TOKEN = 'test-token';
 GLOBAL_CONFIG.JULES_SECONDARY_TOKENS = [];
 import test from 'node:test';
 import assert from 'node:assert';
 import esmock from 'esmock';
+import fs from 'node:fs/promises';
 import * as db from '../src/db/database.js';
 
 test('runBackgroundAgent skips if no backgroundPrompts', async () => {
@@ -148,5 +149,18 @@ test('runBackgroundAgent calls startAndMonitorSession if not locked, and decreme
     assert.strictEqual(incrementCalledCount, 1, 'incrementTasks should be called once');
     assert.strictEqual(decrementCalledCount, 1, 'decrementTasks should be called once in catch block');
     assert.strictEqual(sleepCalledCount, 1, 'sleep should be called once in catch block');
+  }
+});
+
+test.after(async () => {
+  const dbPath = process.env.ORCHESTRATOR_DB_PATH;
+  if (dbPath) {
+    try {
+      await fs.unlink(dbPath);
+      await fs.unlink(`${dbPath}-wal`).catch(() => {});
+      await fs.unlink(`${dbPath}-shm`).catch(() => {});
+    } catch (e) {
+      // Ignore if file doesn't exist
+    }
   }
 });
