@@ -462,6 +462,114 @@ test('Assignment Routes - POST /:id/toggle handles database errors', async () =>
     }
 });
 
+test('Assignment Routes - PUT /:id returns 404 if assignment not found', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            getAssignment: vi.fn(async () => null)
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/9999', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true })
+        });
+        const data = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(data.error).toBe('Assignment not found.');
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - PUT /:id stops assignment when disabled', async () => {
+    const mockAssignment = { id: 456, project_id: 'p1', agent_id: 'a1', enabled: 0, wait_for_pr_merge: 0 };
+    const updateAssignment = vi.fn();
+    const stopAssignment = vi.fn();
+    const startAssignment = vi.fn();
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            getAssignment: vi.fn(async () => mockAssignment),
+            updateAssignment
+        },
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                isAssignmentRunning: vi.fn(() => false),
+                _invalidateAssignmentsCache: vi.fn(),
+                stopAssignment,
+                startAssignment
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/456', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: false })
+        });
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(updateAssignment).toHaveBeenCalledWith(456, expect.objectContaining({ enabled: false }));
+        expect(stopAssignment).toHaveBeenCalledWith(456);
+        expect(startAssignment).not.toHaveBeenCalled();
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST /:id/toggle returns 404 if assignment not found', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            getAssignment: vi.fn(async () => null)
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/9999/toggle', { method: 'POST' });
+        const data = await response.json();
+
+        expect(response.status).toBe(404);
+        expect(data.error).toBe('Assignment not found.');
+    } finally {
+        close();
+    }
+});
+
 test('Assignment Routes - PUT /:id handles database errors', async () => {
     const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
         '../../src/db/database.js': {
