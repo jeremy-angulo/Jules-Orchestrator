@@ -194,3 +194,47 @@ test('Jules Routes - GET /sessions/:id/activities handles error', async () => {
     expect(response.status).toBe(500);
     expect(response.body.error).toBe('Failed to fetch activities');
 });
+
+test('Jules Routes - GET /sources/:id handles error', async () => {
+    const julesRoutes = await esmock('../../src/routes/julesRoutes.js', {
+        '../../src/api/julesClient.js': {
+            getSource: vi.fn(async () => {
+                throw new Error('Get source error');
+            })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(julesRoutes.default);
+    const response = await request(app).get('/sources/s1');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Get source error');
+});
+
+test('Jules Routes - GET /sessions/:id handles error', async () => {
+    const julesRoutes = await esmock('../../src/routes/julesRoutes.js', {
+        '../../src/api/julesClient.js': {
+            getSession: vi.fn(async () => {
+                throw new Error('Get session error');
+            })
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const app = await startTestApp(julesRoutes.default);
+    const response = await request(app).get('/sessions/123');
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('Get session error');
+});
