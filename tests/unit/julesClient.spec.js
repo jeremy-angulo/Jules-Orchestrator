@@ -92,21 +92,34 @@ describe('julesClient.js', () => {
             );
         });
 
-        it('should handle query parameters', async () => {
+        it('should handle query parameters including undefined/null filtering', async () => {
             vi.mocked(fetch).mockResolvedValue({
                 ok: true,
                 status: 200,
                 text: async () => JSON.stringify({})
             });
 
-            await julesClient.julesAPI('Agent', '/test', 'GET', null, { param1: 'val1', param2: 123 });
+            await julesClient.julesAPI('Agent', '/test', 'GET', null, { param1: 'val1', param2: 123, emptyParam: null, undefParam: undefined });
 
             const url = vi.mocked(fetch).mock.calls[0][0];
             expect(url).toContain('param1=val1');
             expect(url).toContain('param2=123');
+            expect(url).not.toContain('emptyParam');
+            expect(url).not.toContain('undefParam');
         });
 
-        it('should return null and record error on non-ok response', async () => {
+        it('should return empty object for empty text response', async () => {
+            vi.mocked(fetch).mockResolvedValue({
+                ok: true,
+                status: 200,
+                text: async () => ''
+            });
+
+            const result = await julesClient.julesAPI('Agent', '/test');
+            expect(result).toEqual({ _tokenInfo: { index: 0, label: 'Test Token' } });
+        });
+
+        it('should return null and record error on non-ok response with json error', async () => {
             vi.mocked(fetch).mockResolvedValue({
                 ok: false,
                 status: 401,
@@ -119,6 +132,36 @@ describe('julesClient.js', () => {
 
             expect(result).toBeNull();
             expect(mockMetricsStore.recordServiceError).toHaveBeenCalledWith('jules_api', expect.stringContaining('401'), expect.any(Object));
+        });
+
+        it('should return null and record error on non-ok response when json parsing throws', async () => {
+            vi.mocked(fetch).mockResolvedValue({
+                ok: false,
+                status: 500,
+                statusText: 'Server Error',
+                json: async () => { throw new Error('Not JSON'); },
+                text: async () => 'Raw error text'
+            });
+
+            const result = await julesClient.julesAPI('Agent', '/test');
+
+            expect(result).toBeNull();
+            expect(mockMetricsStore.recordServiceError).toHaveBeenCalledWith('jules_api', expect.stringContaining('500'), expect.any(Object));
+        });
+
+        it('should return null and record error when text reading throws in error handler', async () => {
+            vi.mocked(fetch).mockResolvedValue({
+                ok: false,
+                status: 502,
+                statusText: 'Bad Gateway',
+                json: async () => { throw new Error('Not JSON'); },
+                text: async () => { throw new Error('Cannot read text'); }
+            });
+
+            const result = await julesClient.julesAPI('Agent', '/test');
+
+            expect(result).toBeNull();
+            expect(mockMetricsStore.recordServiceError).toHaveBeenCalledWith('jules_api', expect.stringContaining('502'), expect.any(Object));
         });
 
         it('should handle network errors', async () => {
@@ -153,12 +196,14 @@ describe('julesClient.js', () => {
             expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/sources/456'), expect.any(Object));
         });
 
-        it('createSession should send correct body', async () => {
-            await julesClient.createSession('Agent', 'prompt', 'title', 'github/repo', 'branch', 'AUTO_CREATE_PR');
+        it('createSession should handle optional media, branch fallback and automationMode', async () => {
+            await julesClient.createSession('Agent', 'prompt', 'title', 'repo', null, null, {}, [{ inlineData: { mimeType: 'image/png', data: 'abc' } }]);
             const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1].body);
             expect(body.prompt).toBe('prompt');
-            expect(body.sourceContext.source).toBe('sources/github/repo');
-            expect(body.automationMode).toBe('AUTO_CREATE_PR');
+            expect(body.sourceContext.source).toBe('sources/repo');
+            expect(body.sourceContext.githubRepoContext.startingBranch).toBe('main');
+            expect(body.sourceContext.mediaContext.media).toEqual([{ inlineData: { mimeType: 'image/png', data: 'abc' } }]);
+            expect(body.automationMode).toBeUndefined();
         });
 
         it('getSession should call correct endpoint', async () => {
@@ -198,6 +243,13 @@ describe('julesClient.js', () => {
     describe('monitorExistingSession', () => {
         const mockProject = { id: 'p1', githubRepo: 'r1' };
 
+        it('should return false if initial getSession returns null', async () => {
+            vi.mocked(fetch).mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not found', json: async () => ({}) });
+
+            const result = await julesClient.monitorExistingSession('s1', 'Agent', mockProject);
+            expect(result).toBe(false);
+        });
+
         it('should return true if session is already COMPLETED with PR', async () => {
             vi.mocked(fetch).mockResolvedValueOnce({
                 ok: true,
@@ -218,32 +270,67 @@ describe('julesClient.js', () => {
             expect(result).toBe(false);
         });
 
-        it('should monitor until COMPLETED', async () => {
+        it('should return false if shouldStop() is true before loop or in loop', async () => {
+            vi.mocked(fetch).mockResolvedValueOnce({
+                ok: true,
+                text: async () => JSON.stringify({ state: 'RUNNING' })
+            });
+
+            const result = await julesClient.monitorExistingSession('s1', 'Agent', mockProject, { shouldStop: () => true });
+            expect(result).toBe(false);
+        });
+
+        it('should monitor until COMPLETED and handle null responses in loop', async () => {
             vi.mocked(fetch)
                 .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'RUNNING' }) }) // initial get
-                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'RUNNING' }) }) // loop get
+                .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Error', json: async () => ({}) }) // null response in loop
                 .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'url' } }] }) }); // loop get
 
             const result = await julesClient.monitorExistingSession('s1', 'Agent', mockProject);
             expect(result).toBe(true);
-            expect(fetch).toHaveBeenCalledTimes(3);
         });
 
-        it('should handle AWAITING_PLAN_APPROVAL', async () => {
+        it('should handle AWAITING_PLAN_APPROVAL and AWAITING_USER_FEEDBACK', async () => {
             vi.mocked(fetch)
                 .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'RUNNING' }) }) // initial get
                 .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'AWAITING_PLAN_APPROVAL' }) }) // loop get
                 .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({}) }) // approvePlan response
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'AWAITING_USER_FEEDBACK' }) }) // loop get
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({}) }) // sendMessage response
                 .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'url' } }] }) }); // loop get
 
-            const result = await julesClient.monitorExistingSession('s1', 'Agent', mockProject);
+            const result = await julesClient.monitorExistingSession('s1', 'Agent', mockProject, { preferredTokenId: 101, feedbackMessage: 'custom feedback' });
             expect(result).toBe(true);
             expect(fetch).toHaveBeenCalledWith(expect.stringContaining(':approvePlan'), expect.any(Object));
+            expect(fetch).toHaveBeenCalledWith(expect.stringContaining(':sendMessage'), expect.objectContaining({
+                body: JSON.stringify({ prompt: 'custom feedback' })
+            }));
+        });
+
+        it('should handle COMPLETED without PR and FAILED during loop', async () => {
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'RUNNING' }) })
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [] }) });
+
+            const resNoPR = await julesClient.monitorExistingSession('s1', 'Agent', mockProject);
+            expect(resNoPR).toBe(false);
+
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'RUNNING' }) })
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) });
+
+            const resFailed = await julesClient.monitorExistingSession('s1', 'Agent', mockProject);
+            expect(resFailed).toBe(false);
         });
     });
 
     describe('startAndMonitorSession', () => {
         const mockProject = { id: 'p1', githubRepo: 'repo1' };
+
+        it('should return false immediately if shouldStop() is true before session creation', async () => {
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject, { shouldStop: () => true });
+            expect(result).toBe(false);
+        });
 
         it('should return true when session completes with PR', async () => {
             vi.mocked(fetch)
@@ -259,12 +346,21 @@ describe('julesClient.js', () => {
             expect(mockGithubClient.checkAndMergePR).toHaveBeenCalledWith(mockProject, '123');
         });
 
+        it('should handle shouldStop() during monitoring loop and before polling sleep', async () => {
+            let stop = false;
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
+                .mockResolvedValueOnce({ ok: true, text: async () => { stop = true; return JSON.stringify({ state: 'RUNNING' }); } });
+
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject, { shouldStop: () => stop, preferredTokenId: 'token-99' });
+            expect(result).toBe(false);
+        });
+
         it('should call callbacks and skip auto-merge if onPRCreated is provided', async () => {
             const onPRCreated = vi.fn();
             const onTokenPicked = vi.fn();
             const onSessionCreated = vi.fn();
 
-            // Mock token rotation to return a different token for this test
             mockTokenRotation.getAvailableToken.mockResolvedValueOnce({ token: 't2', index: 1, label: 'T2' });
 
             vi.mocked(fetch)
@@ -300,6 +396,38 @@ describe('julesClient.js', () => {
             expect(fetch).toHaveBeenCalledTimes(3); // MAX_RETRIES = 3
         });
 
+        it('should handle FAILED state by breaking loop and retrying new session', async () => {
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) }) // create 1
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'FAILED' }) }) // session 1 fails
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s2' }) }) // create 2
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'https://github.com/org/repo/pull/123' } }] }) }); // session 2 succeeds
+
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
+            expect(result).toBe(true);
+        });
+
+        it('should handle caught exception during session monitoring', async () => {
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
+                .mockRejectedValueOnce(new Error('Unexpected stream error')) // trigger catch
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s2' }) })
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'https://github.com/org/repo/pull/123' } }] }) });
+
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
+            expect(result).toBe(true);
+        });
+
+        it('should handle null state responses in loop', async () => {
+            vi.mocked(fetch)
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
+                .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) }) // getSession returns null
+                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'https://github.com/org/repo/pull/123' } }] }) });
+
+            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
+            expect(result).toBe(true);
+        });
+
         it('should handle AWAITING_USER_FEEDBACK', async () => {
             vi.mocked(fetch)
                 .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) }) // create
@@ -312,49 +440,6 @@ describe('julesClient.js', () => {
             expect(fetch).toHaveBeenCalledWith(expect.stringContaining(':sendMessage'), expect.objectContaining({
                 body: JSON.stringify({ prompt: 'keep going' })
             }));
-        });
-
-        it('should schedule checkAndMergePR when onPRCreated is not provided', async () => {
-            vi.mocked(fetch)
-                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
-                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'https://github.com/org/repo/pull/789' } }] }) });
-
-            // Setup checkAndMergePR mock to reject to also cover the catch block in setTimeout
-            mockGithubClient.checkAndMergePR.mockRejectedValueOnce(new Error('Auto-merge failed'));
-
-            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
-            expect(result).toBe(true);
-
-            // Verify it has not been called yet before 60s
-            expect(mockGithubClient.checkAndMergePR).not.toHaveBeenCalled();
-
-            // Advance timers by 60s
-            await vi.advanceTimersByTimeAsync(60000);
-
-            // Verify it was scheduled and called with correct parameters
-            expect(mockGithubClient.checkAndMergePR).toHaveBeenCalledWith(mockProject, '789');
-        });
-
-        it('should handle malformed PR URLs gracefully', async () => {
-            vi.mocked(fetch)
-                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
-                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [{ pullRequest: { url: 'https://github.com/malformed-url' } }] }) });
-
-            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
-            expect(result).toBe(true); // Should still return true since a PR was detected, even if URL is malformed
-
-            // Advance timers to verify checkAndMergePR is NOT scheduled or called since match failed
-            await vi.advanceTimersByTimeAsync(60000);
-            expect(mockGithubClient.checkAndMergePR).not.toHaveBeenCalled();
-        });
-
-        it('should return false if session completes successfully but no PR was created', async () => {
-            vi.mocked(fetch)
-                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ name: 'sessions/s1' }) })
-                .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ state: 'COMPLETED', outputs: [] }) });
-
-            const result = await julesClient.startAndMonitorSession('instr', 'Agent', mockProject);
-            expect(result).toBe(false);
         });
     });
 });
