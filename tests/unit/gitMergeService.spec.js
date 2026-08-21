@@ -274,3 +274,31 @@ test('gitMergeService - aborts mechanical merge if there is an unsupported confl
   expect(executedCommands).not.toContain('git add file1.js');
   expect(executedCommands).not.toContain('git push origin HEAD');
 });
+
+test('gitMergeService - ignores errors thrown during cleanup in finally block', async () => {
+  const rmSpy = vi.fn().mockRejectedValue(new Error('Permission denied on cleanup'));
+
+  const { attemptMechanicalMerge } = await esmock('../../src/services/gitMergeService.js', {
+    'child_process': {
+      exec: (cmd, options, callback) => {
+        if (cmd.includes('gh pr view')) {
+          callback(null, { stdout: JSON.stringify({ baseRefName: 'main' }) });
+        } else {
+          callback(null, { stdout: '' });
+        }
+      }
+    },
+    'fs/promises': {
+      mkdtemp: vi.fn().mockResolvedValue('/tmp/mock-dir-rm-fail'),
+      rm: rmSpy
+    },
+    '../../src/utils/logger.js': {
+      log: vi.fn()
+    }
+  });
+
+  // Main execution succeeds despite cleanup error in finally block
+  const result = await attemptMechanicalMerge(mockProject, 123);
+  expect(result).toBe(true);
+  expect(rmSpy).toHaveBeenCalledWith('/tmp/mock-dir-rm-fail', { recursive: true, force: true });
+});

@@ -149,3 +149,66 @@ test('metricsStore - default parameters for helper functions', async () => {
     const uptime = await metricsStore.getServiceUptime(serviceId);
     expect(uptime.uptimePercent).toBe(0);
 });
+
+test('metricsStore - dashboard metrics filtering by time window', async () => {
+    const key = 'window-metric-' + Date.now();
+    const now = Date.now();
+
+    // Mock Date.now to record an old metric (26 hours ago) and a recent metric (1 hour ago)
+    const dateSpy = vi.spyOn(Date, 'now');
+
+    dateSpy.mockReturnValue(now - 26 * 3_600_000);
+    await metricsStore.recordDashboardMetric(key, 10);
+
+    dateSpy.mockReturnValue(now - 1 * 3_600_000);
+    await metricsStore.recordDashboardMetric(key, 20);
+
+    dateSpy.mockReturnValue(now);
+
+    // List metrics for last 24 hours
+    const metrics24h = await metricsStore.listDashboardMetrics(key, 24);
+    expect(metrics24h.length).toBe(1);
+    expect(metrics24h[0].value).toBe(20);
+
+    // List batch metrics for last 24 hours
+    const batch24h = await metricsStore.listDashboardMetricsBatch([key], 24);
+    expect(batch24h[key].length).toBe(1);
+    expect(batch24h[key][0].value).toBe(20);
+
+    // List metrics for last 48 hours (should include both)
+    const metrics48h = await metricsStore.listDashboardMetrics(key, 48);
+    expect(metrics48h.length).toBe(2);
+
+    dateSpy.mockRestore();
+});
+
+test('metricsStore - getApiUsageSummary24h sorts agents and tokens in descending usage order', async () => {
+    const now = Date.now();
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
+
+    const tokenA = 'token-frequent-' + Date.now();
+    const tokenB = 'token-rare-' + Date.now();
+    const agentA = 'agent-busy-' + Date.now();
+    const agentB = 'agent-quiet-' + Date.now();
+
+    // Agent A calls 3 times, Agent B calls 1 time
+    await metricsStore.recordApiCall(tokenA, agentA);
+    await metricsStore.recordApiCall(tokenA, agentA);
+    await metricsStore.recordApiCall(tokenA, agentA);
+    await metricsStore.recordApiCall(tokenB, agentB);
+
+    const summary = await metricsStore.getApiUsageSummary24h();
+
+    const sortedAgentA = summary.byAgent.find(a => a.agentName === agentA);
+    const sortedAgentB = summary.byAgent.find(a => a.agentName === agentB);
+
+    expect(sortedAgentA.total).toBe(3);
+    expect(sortedAgentB.total).toBe(1);
+
+    // Check relative ordering in byAgent array
+    const indexA = summary.byAgent.indexOf(sortedAgentA);
+    const indexB = summary.byAgent.indexOf(sortedAgentB);
+    expect(indexA).toBeLessThan(indexB);
+
+    dateSpy.mockRestore();
+});
