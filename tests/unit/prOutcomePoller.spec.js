@@ -241,6 +241,99 @@ test('prOutcomePoller - startPROutcomePoller schedules cycles and handles errors
     vi.useRealTimers();
 });
 
+test('prOutcomePoller - runPROutcomeCycle returns early when no journal rows found', async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const prOutcomePoller = await esmock('../../src/services/prOutcomePoller.js', {
+        '../../src/db/core.js': {
+            executeWithRetry: vi.fn().mockResolvedValue({ rows: [] })
+        },
+        '../../src/utils/logger.js': {
+            log: vi.fn()
+        }
+    });
+
+    const projectById = new Map();
+    await prOutcomePoller.runPROutcomeCycle(projectById);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+});
+
+test('prOutcomePoller - runPROutcomeCycle skips invalid PR URLs', async () => {
+    const sqlCalls = [];
+    const mockRows = [
+        { id: 10, project_id: 'p10', pr_url: 'not-a-valid-github-pr-url', pr_status: 'open', ended_at: Date.now() }
+    ];
+
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const prOutcomePoller = await esmock('../../src/services/prOutcomePoller.js', {
+        '../../src/db/core.js': {
+            executeWithRetry: vi.fn(async (stmt) => {
+                sqlCalls.push(stmt);
+                if (stmt.sql.includes('SELECT')) return { rows: mockRows };
+                return { rows: [] };
+            })
+        },
+        '../../src/utils/logger.js': {
+            log: vi.fn()
+        }
+    });
+
+    const projectById = new Map();
+    await prOutcomePoller.runPROutcomeCycle(projectById);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const updateCall = sqlCalls.find(c => c.sql.includes('UPDATE'));
+    expect(updateCall).toBeUndefined();
+    vi.unstubAllGlobals();
+});
+
+test('prOutcomePoller - runPROutcomeCycle falls back to process.env.GITHUB_TOKEN', async () => {
+    vi.stubEnv('GITHUB_TOKEN', 'env-fallback-token');
+
+    const sqlCalls = [];
+    const mockRows = [
+        { id: 11, project_id: 'p11', pr_url: 'https://github.com/owner/unknown-repo/pull/999', pr_status: 'open', ended_at: Date.now() }
+    ];
+
+    const prOutcomePoller = await esmock('../../src/services/prOutcomePoller.js', {
+        '../../src/db/core.js': {
+            executeWithRetry: vi.fn(async (stmt) => {
+                sqlCalls.push(stmt);
+                if (stmt.sql.includes('SELECT')) return { rows: mockRows };
+                return { rows: [] };
+            })
+        },
+        '../../src/utils/logger.js': {
+            log: vi.fn()
+        }
+    });
+
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ merged: true, state: 'closed' })
+    })));
+
+    const projectById = new Map(); // Empty map, no Jules-Orchestrator master token
+    await prOutcomePoller.runPROutcomeCycle(projectById);
+
+    expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.github.com/repos/owner/unknown-repo/pulls/999',
+        expect.objectContaining({
+            headers: expect.objectContaining({
+                Authorization: 'Bearer env-fallback-token'
+            })
+        })
+    );
+
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+});
+
 test('prOutcomePoller - startPROutcomePoller triggers successfully on interval', async () => {
     vi.useFakeTimers();
 
