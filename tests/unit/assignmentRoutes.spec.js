@@ -53,6 +53,180 @@ test('Assignment Routes - GET / returns list of enriched assignments', async () 
     }
 });
 
+test('Assignment Routes - GET / passes projectId query parameter to listAssignments', async () => {
+    const listAssignments = vi.fn(async (projectId) => {
+        expect(projectId).toBe('proj-xyz');
+        return [{ id: 2, project_id: 'proj-xyz', agent_id: 'a1', enabled: 1 }];
+    });
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            listAssignments
+        },
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                isAssignmentRunning: vi.fn(() => false),
+                _invalidateAssignmentsCache: vi.fn()
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments?projectId=proj-xyz');
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(listAssignments).toHaveBeenCalledWith('proj-xyz');
+        expect(data.assignments.length).toBe(1);
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST / handles getAssignment returning null after creation', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            createAssignment: vi.fn(async () => 999),
+            getAssignment: vi.fn(async () => null)
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_id: 'p1', agent_id: 'a1' })
+        });
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Failed to retrieve newly created assignment');
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST /:id/toggle catches startAssignment errors gracefully', async () => {
+    const mockAssignmentBefore = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 0 };
+    const mockAssignmentAfter = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 1 };
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            getAssignment: vi.fn()
+                .mockResolvedValueOnce(mockAssignmentBefore)
+                .mockResolvedValueOnce(mockAssignmentAfter),
+            toggleAssignment: vi.fn()
+        },
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                isAssignmentRunning: vi.fn(() => false),
+                _invalidateAssignmentsCache: vi.fn(),
+                startAssignment: vi.fn(async () => { throw new Error('Start error'); })
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(data.ok).toBe(true);
+        expect(data.assignment.enabled).toBe(1);
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - GET /:id/journal uses default limit when limit query param is omitted', async () => {
+    const listJournalByAssignment = vi.fn(async (id, limit) => {
+        expect(limit).toBe(20);
+        return [];
+    });
+
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/db/database.js': {
+            listJournalByAssignment
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/123/journal');
+        const data = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(listJournalByAssignment).toHaveBeenCalledWith(123, 20);
+    } finally {
+        close();
+    }
+});
+
+test('Assignment Routes - POST /:id/stop handles errors', async () => {
+    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+        '../../src/controlCenter.js': {
+            controlCenter: {
+                stopAssignment: vi.fn(async () => { throw new Error('Failed to stop assignment'); })
+            }
+        },
+        '../../src/middleware/securityMiddleware.js': {
+            apiRateLimiter: (req, res, next) => next()
+        },
+        '../../src/middleware/authMiddleware.js': {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: vi.fn()
+        }
+    });
+
+    const { url, close } = await startTestApp(assignmentRoutes.default);
+
+    try {
+        const response = await fetch(url + '/assignments/999/stop', { method: 'POST' });
+        const data = await response.json();
+
+        expect(response.status).toBe(500);
+        expect(data.error).toBe('Failed to stop assignment');
+    } finally {
+        close();
+    }
+});
+
 test('Assignment Routes - POST /:id/run triggers one-shot run', async () => {
     const runAssignmentOnce = vi.fn(async () => 'run-789');
     const audit = vi.fn();
