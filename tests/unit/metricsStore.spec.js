@@ -182,6 +182,69 @@ test('metricsStore - dashboard metrics filtering by time window', async () => {
     dateSpy.mockRestore();
 });
 
+test('metricsStore - recordServiceError handles Error objects and non-string inputs', async () => {
+    const serviceId = 'err-object-service-' + Date.now();
+
+    // Pass native Error object
+    const nativeError = new Error('Database connection failed');
+    await metricsStore.recordServiceError(serviceId, nativeError);
+
+    // Pass number as error
+    await metricsStore.recordServiceError(serviceId, 500);
+
+    const errors = await metricsStore.listServiceErrors(serviceId, 1, 10);
+    expect(errors.length).toBe(2);
+    expect(errors[0].error_message).toBe('500');
+    expect(errors[1].error_message).toBe('Error: Database connection failed');
+});
+
+test('metricsStore - service error window filtering for summary, list, and uptime', async () => {
+    const serviceId = 'window-service-' + Date.now();
+    const now = Date.now();
+    const dateSpy = vi.spyOn(Date, 'now');
+
+    // 1. Record OK check 30 hours ago
+    dateSpy.mockReturnValue(now - 30 * 3_600_000);
+    await metricsStore.recordServiceCheck(serviceId, true);
+
+    // 2. Record Error check 26 hours ago
+    dateSpy.mockReturnValue(now - 26 * 3_600_000);
+    await metricsStore.recordServiceError(serviceId, 'Old error');
+
+    // 3. Record Error check 2 hours ago
+    dateSpy.mockReturnValue(now - 2 * 3_600_000);
+    await metricsStore.recordServiceError(serviceId, 'Recent error');
+
+    // 4. Record OK check 1 hour ago
+    dateSpy.mockReturnValue(now - 1 * 3_600_000);
+    await metricsStore.recordServiceCheck(serviceId, true);
+
+    dateSpy.mockReturnValue(now);
+
+    // Query 24h window (should only count 2 hours ago error and 1 hour ago OK check)
+    const errorSummary24h = await metricsStore.getServiceErrorSummary(serviceId, 24);
+    expect(errorSummary24h.errors).toBe(1);
+
+    const serviceErrors24h = await metricsStore.listServiceErrors(serviceId, 24);
+    expect(serviceErrors24h.length).toBe(1);
+    expect(serviceErrors24h[0].error_message).toBe('Recent error');
+
+    const uptime24h = await metricsStore.getServiceUptime(serviceId, 24);
+    expect(uptime24h.uptimePercent).toBe(50); // 1 OK, 1 Error in 24h
+
+    // Query 48h window (should count both errors and both OK checks)
+    const errorSummary48h = await metricsStore.getServiceErrorSummary(serviceId, 48);
+    expect(errorSummary48h.errors).toBe(2);
+
+    const serviceErrors48h = await metricsStore.listServiceErrors(serviceId, 48);
+    expect(serviceErrors48h.length).toBe(2);
+
+    const uptime48h = await metricsStore.getServiceUptime(serviceId, 48);
+    expect(uptime48h.uptimePercent).toBe(50); // 2 OK, 2 Error in 48h
+
+    dateSpy.mockRestore();
+});
+
 test('metricsStore - getApiUsageSummary24h sorts agents and tokens in descending usage order', async () => {
     const now = Date.now();
     const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(now);
