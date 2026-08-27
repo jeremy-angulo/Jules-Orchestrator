@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { hasPermission, isValidRole, getRolePermissions } from '../../src/auth/permissions.js';
+import { ROLES, hasPermission, isValidRole, getRolePermissions } from '../../src/auth/permissions.js';
 
 describe('permissions', () => {
+  describe('ROLES constant', () => {
+    it('should export standard role constants', () => {
+      expect(ROLES).toEqual({
+        ADMIN: 'admin',
+        OPERATOR: 'operator',
+        VIEWER: 'viewer'
+      });
+    });
+  });
   describe('isValidRole', () => {
     it('should return true for known roles', () => {
       expect(isValidRole('admin')).toBe(true);
@@ -22,6 +31,17 @@ describe('permissions', () => {
       const perms = getRolePermissions('unknown-role');
       expect(perms).toBeInstanceOf(Set);
       expect(perms.size).toBe(0);
+    });
+
+    it('should handle non-string or missing role inputs gracefully', () => {
+      expect(getRolePermissions(null)).toBeInstanceOf(Set);
+      expect(getRolePermissions(null).size).toBe(0);
+      expect(getRolePermissions(undefined)).toBeInstanceOf(Set);
+      expect(getRolePermissions(undefined).size).toBe(0);
+      expect(getRolePermissions(123)).toBeInstanceOf(Set);
+      expect(getRolePermissions(123).size).toBe(0);
+      expect(getRolePermissions({})).toBeInstanceOf(Set);
+      expect(getRolePermissions({}).size).toBe(0);
     });
 
     it('should return permissions Set for admin', () => {
@@ -61,6 +81,14 @@ describe('permissions', () => {
     it('should return false for unknown roles or permissions', () => {
       expect(hasPermission('unknown-role', 'dashboard.read')).toBe(false);
       expect(hasPermission('admin', 'nonexistent.permission')).toBe(false);
+    });
+
+    it('should handle non-string or missing arguments gracefully', () => {
+      expect(hasPermission(null, 'dashboard.read')).toBe(false);
+      expect(hasPermission('admin', null)).toBe(false);
+      expect(hasPermission(undefined, undefined)).toBe(false);
+      expect(hasPermission(123, 'dashboard.read')).toBe(false);
+      expect(hasPermission('admin', {})).toBe(false);
     });
   });
 });
