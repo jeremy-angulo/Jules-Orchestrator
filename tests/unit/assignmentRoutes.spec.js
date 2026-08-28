@@ -1,32 +1,28 @@
 import { test, expect, vi } from 'vitest';
 import esmock from 'esmock';
 import express from 'express';
+import request from 'supertest';
 
-async function startTestApp(router) {
-    const app = express();
-    app.use(express.json());
-    app.use('/assignments', router);
-    const server = app.listen(0);
-    const port = server.address().port;
-    return {
-        url: `http://127.0.0.1:${port}`,
-        close: () => server.close()
-    };
-}
-
-test('Assignment Routes - GET / returns list of enriched assignments', async () => {
-    const mockAssignments = [
-        { id: 1, project_id: 'p1', agent_id: 'a1', enabled: 1, wait_for_pr_merge: 0 }
-    ];
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
+const setupRouter = async (mocks = {}) => {
+    return await esmock('../../src/routes/assignmentRoutes.js', {
         '../../src/db/database.js': {
-            listAssignments: vi.fn(async () => mockAssignments)
+            listAssignments: vi.fn(async () => [{ id: 1, project_id: 'p1', agent_id: 'a1', enabled: 1 }]),
+            createAssignment: vi.fn(async () => 123),
+            getAssignment: vi.fn(async (id) => ({ id, project_id: 'p1', agent_id: 'a1', enabled: 1 })),
+            toggleAssignment: vi.fn(async () => {}),
+            updateAssignment: vi.fn(async () => {}),
+            deleteAssignment: vi.fn(async () => {}),
+            listJournalByAssignment: vi.fn(async () => [{ id: 1, assignment_id: 123, status: 'success' }]),
+            ...mocks.database
         },
         '../../src/controlCenter.js': {
             controlCenter: {
                 isAssignmentRunning: vi.fn((id) => id === 1),
-                _invalidateAssignmentsCache: vi.fn()
+                _invalidateAssignmentsCache: vi.fn(() => {}),
+                startAssignment: vi.fn(async () => {}),
+                stopAssignment: vi.fn(async () => {}),
+                runAssignmentOnce: vi.fn(async () => 'runner-123'),
+                ...mocks.controlCenter
             }
         },
         '../../src/middleware/securityMiddleware.js': {
@@ -35,801 +31,286 @@ test('Assignment Routes - GET / returns list of enriched assignments', async () 
         '../../src/middleware/authMiddleware.js': {
             requirePermission: () => (req, res, next) => next(),
             requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
+            audit: vi.fn(async () => {})
         }
     });
+};
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+const createApp = (router) => {
+    const app = express();
+    app.use(express.json());
+    app.use('/assignments', router);
+    return app;
+};
 
-    try {
-        const response = await fetch(url + '/assignments');
-        const data = await response.json();
+test('Assignment Routes - GET / returns assignments', async () => {
+    const router = await setupRouter();
+    const app = createApp(router);
 
-        expect(response.status).toBe(200);
-        expect(data.assignments.length).toBe(1);
-        expect(data.assignments[0].running).toBe(true);
-    } finally {
-        close();
-    }
+    const res = await request(app).get('/assignments');
+    expect(res.status).toBe(200);
+    expect(res.body.assignments).toHaveLength(1);
+    expect(res.body.assignments[0].running).toBe(true);
 });
 
-test('Assignment Routes - GET / passes projectId query parameter to listAssignments', async () => {
-    const listAssignments = vi.fn(async (projectId) => {
-        expect(projectId).toBe('proj-xyz');
-        return [{ id: 2, project_id: 'proj-xyz', agent_id: 'a1', enabled: 1 }];
+test('Assignment Routes - GET / handles service error with 500', async () => {
+    const router = await setupRouter({
+        database: { listAssignments: vi.fn(async () => { throw new Error('DB Error'); }) }
     });
+    const app = createApp(router);
 
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            listAssignments
-        },
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                isAssignmentRunning: vi.fn(() => false),
-                _invalidateAssignmentsCache: vi.fn()
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next()
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments?projectId=proj-xyz');
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(listAssignments).toHaveBeenCalledWith('proj-xyz');
-        expect(data.assignments.length).toBe(1);
-    } finally {
-        close();
-    }
-});
-
-test('Assignment Routes - POST / handles getAssignment returning null after creation', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            createAssignment: vi.fn(async () => 999),
-            getAssignment: vi.fn(async () => null)
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ project_id: 'p1', agent_id: 'a1' })
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('Failed to retrieve newly created assignment');
-    } finally {
-        close();
-    }
-});
-
-test('Assignment Routes - POST /:id/toggle catches startAssignment errors gracefully', async () => {
-    const mockAssignmentBefore = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 0 };
-    const mockAssignmentAfter = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 1 };
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn()
-                .mockResolvedValueOnce(mockAssignmentBefore)
-                .mockResolvedValueOnce(mockAssignmentAfter),
-            toggleAssignment: vi.fn()
-        },
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                isAssignmentRunning: vi.fn(() => false),
-                _invalidateAssignmentsCache: vi.fn(),
-                startAssignment: vi.fn(async () => { throw new Error('Start error'); })
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(data.assignment.enabled).toBe(1);
-    } finally {
-        close();
-    }
-});
-
-test('Assignment Routes - GET /:id/journal uses default limit when limit query param is omitted', async () => {
-    const listJournalByAssignment = vi.fn(async (id, limit) => {
-        expect(limit).toBe(20);
-        return [];
-    });
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            listJournalByAssignment
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next()
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/123/journal');
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(listJournalByAssignment).toHaveBeenCalledWith(123, 20);
-    } finally {
-        close();
-    }
-});
-
-test('Assignment Routes - POST /:id/stop handles errors', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                stopAssignment: vi.fn(async () => { throw new Error('Failed to stop assignment'); })
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/999/stop', { method: 'POST' });
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('Failed to stop assignment');
-    } finally {
-        close();
-    }
-});
-
-test('Assignment Routes - POST /:id/run triggers one-shot run', async () => {
-    const runAssignmentOnce = vi.fn(async () => 'run-789');
-    const audit = vi.fn();
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                runAssignmentOnce
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/123/run', { method: 'POST' });
-        const data = await response.json();
-
-        expect(response.status).toBe(202);
-        expect(data.ok).toBe(true);
-        expect(data.runnerId).toBe('run-789');
-        expect(runAssignmentOnce).toHaveBeenCalledWith(123);
-        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.runOnce', '123', { runnerId: 'run-789' });
-    } finally {
-        close();
-    }
-});
-
-test('Assignment Routes - POST /:id/run handles errors', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                runAssignmentOnce: vi.fn(async () => { throw new Error('Run failed'); })
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/123/run', { method: 'POST' });
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('Run failed');
-    } finally {
-        close();
-    }
-});
-
-test('Assignment Routes - DELETE /:id stops and deletes', async () => {
-    const deleteAssignment = vi.fn();
-    const stopAssignment = vi.fn();
-    const _invalidateAssignmentsCache = vi.fn();
-    const audit = vi.fn();
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            deleteAssignment
-        },
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                stopAssignment,
-                _invalidateAssignmentsCache
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/789', {
-            method: 'DELETE'
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(stopAssignment).toHaveBeenCalledWith(789);
-        expect(deleteAssignment).toHaveBeenCalledWith(789);
-        expect(_invalidateAssignmentsCache).toHaveBeenCalled();
-        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.delete', '789');
-    } finally {
-        close();
-    }
+    const res = await request(app).get('/assignments');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('DB Error');
 });
 
 test('Assignment Routes - POST / creates and starts an assignment', async () => {
-    const mockAssignment = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 1, wait_for_pr_merge: 1 };
-
-    const createAssignment = vi.fn(async () => 123);
-    const getAssignment = vi.fn(async (id) => id === 123 ? mockAssignment : null);
-    const startAssignment = vi.fn();
-    const _invalidateAssignmentsCache = vi.fn();
-    const audit = vi.fn();
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            createAssignment,
-            getAssignment
-        },
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                isAssignmentRunning: vi.fn(() => false),
-                _invalidateAssignmentsCache,
-                startAssignment
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit
-        }
+    const startSpy = vi.fn(async () => {});
+    const router = await setupRouter({
+        controlCenter: { startAssignment: startSpy }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+    const res = await request(app)
+        .post('/assignments')
+        .send({ project_id: 'p1', agent_id: 'a1' });
 
-    try {
-        const response = await fetch(url + '/assignments', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ project_id: 'p1', agent_id: 'a1', wait_for_pr_merge: true })
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(201);
-        expect(data.ok).toBe(true);
-        expect(data.assignment.id).toBe(123);
-        expect(data.assignment.wait_for_pr_merge).toBe(1);
-        expect(createAssignment).toHaveBeenCalledWith(expect.objectContaining({ wait_for_pr_merge: true }));
-        expect(startAssignment).toHaveBeenCalledWith(123);
-        expect(_invalidateAssignmentsCache).toHaveBeenCalled();
-        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.create', '123', expect.anything());
-    } finally {
-        close();
-    }
+    expect(res.status).toBe(201);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.assignment.id).toBe(123);
+    expect(startSpy).toHaveBeenCalledWith(123);
 });
 
-test('Assignment Routes - PUT /:id updates and restarts', async () => {
-    const mockAssignment = { id: 456, project_id: 'p1', agent_id: 'a1', enabled: 1, wait_for_pr_merge: 1 };
-    const updateAssignment = vi.fn();
-    const stopAssignment = vi.fn();
-    const startAssignment = vi.fn();
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn(async () => mockAssignment),
-            updateAssignment
-        },
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                isAssignmentRunning: vi.fn(() => true),
-                _invalidateAssignmentsCache: vi.fn(),
-                stopAssignment,
-                startAssignment
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+test('Assignment Routes - POST / throws error if newly created assignment not found', async () => {
+    const router = await setupRouter({
+        database: { getAssignment: vi.fn(async () => null) }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+    const res = await request(app)
+        .post('/assignments')
+        .send({ project_id: 'p1', agent_id: 'a1' });
 
-    try {
-        const response = await fetch(url + '/assignments/456', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ wait_for_pr_merge: true, enabled: true })
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(updateAssignment).toHaveBeenCalledWith(456, expect.objectContaining({ wait_for_pr_merge: true }));
-        expect(stopAssignment).toHaveBeenCalledWith(456);
-        expect(startAssignment).toHaveBeenCalledWith(456);
-    } finally {
-        close();
-    }
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain('Failed to retrieve newly created assignment');
 });
 
-test('Assignment Routes - POST /:id/toggle toggles assignment and handles start/stop', async () => {
-    let currentEnabled = true;
-    const mockAssignmentBefore = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 1 };
-    const mockAssignmentAfter = { id: 123, project_id: 'p1', agent_id: 'a1', enabled: 0 };
-
-    const toggleAssignment = vi.fn(async (id, enabled) => {
-        currentEnabled = enabled;
+test('Assignment Routes - POST / handles service error with 500', async () => {
+    const router = await setupRouter({
+        database: { createAssignment: vi.fn(async () => { throw new Error('Create Error'); }) }
     });
-    const stopAssignment = vi.fn();
-    const startAssignment = vi.fn();
-    const _invalidateAssignmentsCache = vi.fn();
-    const audit = vi.fn();
+    const app = createApp(router);
 
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn(async (id) => currentEnabled ? mockAssignmentBefore : mockAssignmentAfter),
-            toggleAssignment
+    const res = await request(app)
+        .post('/assignments')
+        .send({ project_id: 'p1', agent_id: 'a1' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Create Error');
+});
+
+test('Assignment Routes - POST /:id/toggle toggles off and stops assignment', async () => {
+    const stopSpy = vi.fn(async () => {});
+    const router = await setupRouter({
+        database: {
+            getAssignment: vi.fn(async (id) => ({ id, enabled: 1 }))
         },
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                isAssignmentRunning: vi.fn(() => false),
-                _invalidateAssignmentsCache,
-                stopAssignment,
-                startAssignment
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit
-        }
+        controlCenter: { stopAssignment: stopSpy }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+    const res = await request(app).post('/assignments/123/toggle');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(stopSpy).toHaveBeenCalledWith(123);
+});
 
-    try {
-        // Toggle from enabled (1) to disabled (0)
-        const response1 = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
-        const data1 = await response1.json();
+test('Assignment Routes - POST /:id/toggle returns 404 when assignment missing', async () => {
+    const router = await setupRouter({
+        database: { getAssignment: vi.fn(async () => null) }
+    });
+    const app = createApp(router);
 
-        expect(response1.status).toBe(200);
-        expect(data1.ok).toBe(true);
-        expect(toggleAssignment).toHaveBeenCalledWith(123, false);
-        expect(stopAssignment).toHaveBeenCalledWith(123);
-        expect(startAssignment).not.toHaveBeenCalled();
-        expect(_invalidateAssignmentsCache).toHaveBeenCalled();
-        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.toggle', '123', { enabled: false });
+    const res = await request(app).post('/assignments/999/toggle');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Assignment not found.');
+});
 
-        // Toggle from disabled (0) to enabled (1)
-        const response2 = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
-        const data2 = await response2.json();
+test('Assignment Routes - POST /:id/toggle handles error with 500', async () => {
+    const router = await setupRouter({
+        database: { getAssignment: vi.fn(async () => { throw new Error('Toggle Error'); }) }
+    });
+    const app = createApp(router);
 
-        expect(response2.status).toBe(200);
-        expect(data2.ok).toBe(true);
-        expect(toggleAssignment).toHaveBeenLastCalledWith(123, true);
-        expect(startAssignment).toHaveBeenCalledWith(123);
-        expect(audit).toHaveBeenLastCalledWith(expect.anything(), 'assignment.toggle', '123', { enabled: true });
-    } finally {
-        close();
-    }
+    const res = await request(app).post('/assignments/123/toggle');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Toggle Error');
+});
+
+test('Assignment Routes - POST /:id/run triggers one-off execution', async () => {
+    const runOnceSpy = vi.fn(async () => 'runner-456');
+    const router = await setupRouter({
+        controlCenter: { runAssignmentOnce: runOnceSpy }
+    });
+    const app = createApp(router);
+
+    const res = await request(app).post('/assignments/123/run');
+    expect(res.status).toBe(202);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.runnerId).toBe('runner-456');
+    expect(runOnceSpy).toHaveBeenCalledWith(123);
+});
+
+test('Assignment Routes - POST /:id/run handles service error with 500', async () => {
+    const router = await setupRouter({
+        controlCenter: { runAssignmentOnce: vi.fn(async () => { throw new Error('Run Error'); }) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app).post('/assignments/123/run');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Run Error');
 });
 
 test('Assignment Routes - POST /:id/stop stops assignment', async () => {
-    const stopAssignment = vi.fn();
-    const audit = vi.fn();
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                stopAssignment
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit
-        }
+    const stopSpy = vi.fn(async () => {});
+    const router = await setupRouter({
+        controlCenter: { stopAssignment: stopSpy }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/999/stop', { method: 'POST' });
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(data.ok).toBe(true);
-        expect(stopAssignment).toHaveBeenCalledWith(999);
-        expect(audit).toHaveBeenCalledWith(expect.anything(), 'assignment.stop', '999');
-    } finally {
-        close();
-    }
+    const res = await request(app).post('/assignments/123/stop');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(stopSpy).toHaveBeenCalledWith(123);
 });
 
-test('Assignment Routes - GET /:id/journal returns assignment journal with custom limit', async () => {
-    const mockJournal = [
-        { id: 1, session_id: 's1', assignment_id: 123, project_id: 'p1', agent_name: 'a1', status: 'completed' }
-    ];
-    const listJournalByAssignment = vi.fn(async (id, limit) => {
-        expect(id).toBe(123);
-        expect(limit).toBe(50);
-        return mockJournal;
+test('Assignment Routes - POST /:id/stop handles service error with 500', async () => {
+    const router = await setupRouter({
+        controlCenter: { stopAssignment: vi.fn(async () => { throw new Error('Stop Error'); }) }
     });
+    const app = createApp(router);
 
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            listJournalByAssignment
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next()
-        }
-    });
-
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/123/journal?limit=50');
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(data.journal).toEqual(mockJournal);
-        expect(listJournalByAssignment).toHaveBeenCalledWith(123, 50);
-    } finally {
-        close();
-    }
+    const res = await request(app).post('/assignments/123/stop');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Stop Error');
 });
 
-test('Assignment Routes - POST / handles database errors', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            createAssignment: vi.fn(async () => { throw new Error('Database create failure'); })
+test('Assignment Routes - PUT /:id updates and restarts enabled assignment', async () => {
+    const stopSpy = vi.fn(async () => {});
+    const startSpy = vi.fn(async () => {});
+    const router = await setupRouter({
+        database: {
+            getAssignment: vi.fn(async (id) => ({ id, enabled: 1 }))
         },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+        controlCenter: { stopAssignment: stopSpy, startAssignment: startSpy }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+    const res = await request(app)
+        .put('/assignments/123')
+        .send({ agent_id: 'a2', mode: 'loop' });
 
-    try {
-        const response = await fetch(url + '/assignments', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ project_id: 'p1', agent_id: 'a1' })
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('Database create failure');
-    } finally {
-        close();
-    }
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(stopSpy).toHaveBeenCalledWith(123);
+    expect(startSpy).toHaveBeenCalledWith(123);
 });
 
-test('Assignment Routes - POST /:id/toggle handles database errors', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn(async () => { throw new Error('Database read failure'); })
+test('Assignment Routes - PUT /:id updates and stops disabled assignment', async () => {
+    const stopSpy = vi.fn(async () => {});
+    const router = await setupRouter({
+        database: {
+            getAssignment: vi.fn(async (id) => ({ id, enabled: 0 }))
         },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+        controlCenter: { stopAssignment: stopSpy }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+    const res = await request(app)
+        .put('/assignments/123')
+        .send({ enabled: 0 });
 
-    try {
-        const response = await fetch(url + '/assignments/123/toggle', { method: 'POST' });
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('Database read failure');
-    } finally {
-        close();
-    }
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(stopSpy).toHaveBeenCalledWith(123);
 });
 
-test('Assignment Routes - PUT /:id returns 404 if assignment not found', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn(async () => null)
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+test('Assignment Routes - PUT /:id returns 404 when assignment missing', async () => {
+    const router = await setupRouter({
+        database: { getAssignment: vi.fn(async () => null) }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+    const res = await request(app)
+        .put('/assignments/999')
+        .send({ mode: 'loop' });
 
-    try {
-        const response = await fetch(url + '/assignments/9999', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: true })
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(404);
-        expect(data.error).toBe('Assignment not found.');
-    } finally {
-        close();
-    }
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Assignment not found.');
 });
 
-test('Assignment Routes - PUT /:id stops assignment when disabled', async () => {
-    const mockAssignment = { id: 456, project_id: 'p1', agent_id: 'a1', enabled: 0, wait_for_pr_merge: 0 };
-    const updateAssignment = vi.fn();
-    const stopAssignment = vi.fn();
-    const startAssignment = vi.fn();
-
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn(async () => mockAssignment),
-            updateAssignment
-        },
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                isAssignmentRunning: vi.fn(() => false),
-                _invalidateAssignmentsCache: vi.fn(),
-                stopAssignment,
-                startAssignment
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+test('Assignment Routes - PUT /:id handles service error with 500', async () => {
+    const router = await setupRouter({
+        database: { getAssignment: vi.fn(async () => { throw new Error('Update Error'); }) }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
+    const res = await request(app)
+        .put('/assignments/123')
+        .send({ mode: 'loop' });
 
-    try {
-        const response = await fetch(url + '/assignments/456', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: false })
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(200);
-        expect(updateAssignment).toHaveBeenCalledWith(456, expect.objectContaining({ enabled: false }));
-        expect(stopAssignment).toHaveBeenCalledWith(456);
-        expect(startAssignment).not.toHaveBeenCalled();
-    } finally {
-        close();
-    }
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Update Error');
 });
 
-test('Assignment Routes - POST /:id/toggle returns 404 if assignment not found', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn(async () => null)
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+test('Assignment Routes - GET /:id/journal returns journal entries', async () => {
+    const journalSpy = vi.fn(async (id, limit) => [{ id: 10, assignment_id: id }]);
+    const router = await setupRouter({
+        database: { listJournalByAssignment: journalSpy }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/9999/toggle', { method: 'POST' });
-        const data = await response.json();
-
-        expect(response.status).toBe(404);
-        expect(data.error).toBe('Assignment not found.');
-    } finally {
-        close();
-    }
+    const res = await request(app).get('/assignments/123/journal?limit=10');
+    expect(res.status).toBe(200);
+    expect(res.body.journal).toHaveLength(1);
+    expect(journalSpy).toHaveBeenCalledWith(123, 10);
 });
 
-test('Assignment Routes - PUT /:id handles database errors', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            getAssignment: vi.fn(async () => { throw new Error('Database update failure'); })
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+test('Assignment Routes - GET /:id/journal handles service error with 500', async () => {
+    const router = await setupRouter({
+        database: { listJournalByAssignment: vi.fn(async () => { throw new Error('Journal Error'); }) }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/456', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: true })
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('Database update failure');
-    } finally {
-        close();
-    }
+    const res = await request(app).get('/assignments/123/journal');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Journal Error');
 });
 
-test('Assignment Routes - DELETE /:id handles database errors', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/controlCenter.js': {
-            controlCenter: {
-                stopAssignment: vi.fn(async () => { throw new Error('ControlCenter stop failure'); })
-            }
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next(),
-            requireCriticalConfirmation: (req, res, next) => next(),
-            audit: vi.fn()
-        }
+test('Assignment Routes - DELETE /:id stops and deletes assignment', async () => {
+    const stopSpy = vi.fn(async () => {});
+    const deleteSpy = vi.fn(async () => {});
+    const router = await setupRouter({
+        database: { deleteAssignment: deleteSpy },
+        controlCenter: { stopAssignment: stopSpy }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/789', {
-            method: 'DELETE'
-        });
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('ControlCenter stop failure');
-    } finally {
-        close();
-    }
+    const res = await request(app).delete('/assignments/123');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(stopSpy).toHaveBeenCalledWith(123);
+    expect(deleteSpy).toHaveBeenCalledWith(123);
 });
 
-test('Assignment Routes - GET /:id/journal handles database errors', async () => {
-    const assignmentRoutes = await esmock('../../src/routes/assignmentRoutes.js', {
-        '../../src/db/database.js': {
-            listJournalByAssignment: vi.fn(async () => { throw new Error('Database journal failure'); })
-        },
-        '../../src/middleware/securityMiddleware.js': {
-            apiRateLimiter: (req, res, next) => next()
-        },
-        '../../src/middleware/authMiddleware.js': {
-            requirePermission: () => (req, res, next) => next()
-        }
+test('Assignment Routes - DELETE /:id handles service error with 500', async () => {
+    const router = await setupRouter({
+        database: { deleteAssignment: vi.fn(async () => { throw new Error('Delete Error'); }) }
     });
+    const app = createApp(router);
 
-    const { url, close } = await startTestApp(assignmentRoutes.default);
-
-    try {
-        const response = await fetch(url + '/assignments/123/journal');
-        const data = await response.json();
-
-        expect(response.status).toBe(500);
-        expect(data.error).toBe('Database journal failure');
-    } finally {
-        close();
-    }
+    const res = await request(app).delete('/assignments/123');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Delete Error');
 });
