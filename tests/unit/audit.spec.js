@@ -35,25 +35,25 @@ describe('audit.js', () => {
     });
 
     it('should handle null details', async () => {
-        const evt = {
-          userId: 'user-123',
-          action: 'TEST_ACTION'
-        };
+      const evt = {
+        userId: 'user-123',
+        action: 'TEST_ACTION'
+      };
 
-        await audit.recordAuditEvent(evt);
+      await audit.recordAuditEvent(evt);
 
-        expect(core.executeWithRetry).toHaveBeenCalledWith(expect.objectContaining({
-          args: expect.arrayContaining([
-            expect.any(Number),
-            evt.userId,
-            undefined,
-            evt.action,
-            undefined,
-            null,
-            undefined
-          ])
-        }));
-      });
+      expect(core.executeWithRetry).toHaveBeenCalledWith(expect.objectContaining({
+        args: expect.arrayContaining([
+          expect.any(Number),
+          evt.userId,
+          undefined,
+          evt.action,
+          undefined,
+          null,
+          undefined
+        ])
+      }));
+    });
   });
 
   describe('listAuditEvents', () => {
@@ -74,6 +74,23 @@ describe('audit.js', () => {
       expect(events).toHaveLength(2);
       expect(events[0].details).toEqual({ a: 1 });
       expect(events[1].details).toBeNull();
+    });
+
+    it('should use default hours (24) and limit (200) when parameters are omitted', async () => {
+      const mockRows = [
+        { id: 10, action: 'DEFAULT_ACTION', details: null }
+      ];
+      vi.mocked(core.executeWithRetry).mockResolvedValue({ rows: mockRows });
+
+      const events = await audit.listAuditEvents();
+
+      expect(core.executeWithRetry).toHaveBeenCalledWith(expect.objectContaining({
+        sql: expect.stringContaining('SELECT * FROM audit_log'),
+        args: [expect.any(Number), 200]
+      }));
+
+      expect(events).toHaveLength(1);
+      expect(events[0].action).toBe('DEFAULT_ACTION');
     });
   });
 });
