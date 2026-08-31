@@ -182,6 +182,91 @@ test('metricsStore - dashboard metrics filtering by time window', async () => {
     dateSpy.mockRestore();
 });
 
+test('metricsStore - API call 24h filtering excludes old calls', async () => {
+    const oldToken = 'old-token-' + Date.now();
+    const oldAgent = 'old-agent-' + Date.now();
+    const now = Date.now();
+
+    const dateSpy = vi.spyOn(Date, 'now');
+
+    // 25 hours ago
+    dateSpy.mockReturnValue(now - 25 * 3_600_000);
+    await metricsStore.recordApiCall(oldToken, oldAgent);
+
+    dateSpy.mockReturnValue(now);
+
+    const usage = await metricsStore.getTokenUsage24h(oldToken);
+    expect(usage).toBe(0);
+
+    const summary = await metricsStore.getApiUsageSummary24h();
+    const foundAgent = summary.byAgent.find(a => a.agentName === oldAgent);
+    expect(foundAgent).toBeUndefined();
+
+    dateSpy.mockRestore();
+});
+
+test('metricsStore - listServiceChecks limit parameter and reverse chronological ordering', async () => {
+    const serviceId = 'list-checks-service-' + Date.now();
+
+    for (let i = 1; i <= 5; i++) {
+        await metricsStore.recordServiceCheck(serviceId, true, { statusCode: 200, responseMs: i * 10 });
+    }
+
+    // listServiceChecks default limit = 50
+    const defaultChecks = await metricsStore.listServiceChecks(serviceId);
+    expect(defaultChecks.length).toBe(5);
+
+    // listServiceChecks with limit = 2
+    const limitedChecks = await metricsStore.listServiceChecks(serviceId, 2);
+    expect(limitedChecks.length).toBe(2);
+    // Newest first (i=5 had responseMs 50, i=4 had responseMs 40)
+    expect(limitedChecks[0].response_ms).toBe(50);
+    expect(limitedChecks[1].response_ms).toBe(40);
+});
+
+test('metricsStore - recordServiceError handles null, boolean, and numeric source parameters', async () => {
+    const serviceId = 'primitive-source-service-' + Date.now();
+
+    await metricsStore.recordServiceError(serviceId, 'Error 1', null);
+    await metricsStore.recordServiceError(serviceId, 'Error 2', true);
+    await metricsStore.recordServiceError(serviceId, 'Error 3', 404);
+
+    const errors = await metricsStore.listServiceErrors(serviceId, 1, 10);
+    expect(errors.length).toBe(3);
+    expect(errors[0].source).toBe('404');
+    expect(errors[1].source).toBe('true');
+    expect(errors[2].source).toBe('null');
+});
+
+test('metricsStore - listDashboardMetricsBatch handles empty array and string numeric coercion', async () => {
+    const key = 'coercion-metric-' + Date.now();
+
+    await metricsStore.recordDashboardMetric(key, '99.5');
+
+    const metrics = await metricsStore.listDashboardMetrics(key, 1);
+    expect(metrics.length).toBe(1);
+    expect(metrics[0].value).toBe(99.5);
+    expect(typeof metrics[0].value).toBe('number');
+
+    const emptyBatch = await metricsStore.listDashboardMetricsBatch([], 1);
+    expect(emptyBatch).toEqual({});
+});
+
+test('metricsStore - service checks ring buffer capping at 500', async () => {
+    const cappingServiceId = 'capped-service-' + Date.now();
+
+    // Record 505 checks
+    for (let i = 0; i < 505; i++) {
+        await metricsStore.recordServiceCheck(cappingServiceId, true, { responseMs: i });
+    }
+
+    const checks = await metricsStore.listServiceChecks(cappingServiceId, 1000);
+    expect(checks.length).toBe(500);
+    // Oldest 5 items (responseMs 0..4) dropped. Newest item is responseMs 504.
+    expect(checks[0].response_ms).toBe(504);
+    expect(checks[499].response_ms).toBe(5);
+});
+
 test('metricsStore - recordServiceError handles Error objects and non-string inputs', async () => {
     const serviceId = 'err-object-service-' + Date.now();
 
