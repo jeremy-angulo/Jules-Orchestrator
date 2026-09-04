@@ -52,6 +52,110 @@ test('processPage - completes full cycle: analysis -> merge -> fix', async () =>
     vi.useRealTimers();
 });
 
+test('processPage - formats prompt correctly for admin/auth/root pages and forwards onTokenPicked', async () => {
+    const startSessionSpy = vi.fn().mockImplementation(async (prompt, agentId, project, options) => {
+        if (options?.onTokenPicked) options.onTokenPicked('token-123');
+        if (agentId === 'Site-Check-Analysis' && options?.onPRCreated) {
+            options.onPRCreated({ prUrl: 'url/456', prNumber: 456 });
+        }
+        return true;
+    });
+
+    let mergeAttempts = 0;
+    const mergePRSpy = vi.fn().mockImplementation(async () => {
+        mergeAttempts++;
+        if (mergeAttempts === 1) return { status: 'failed', reason: 'transient' };
+        return { status: 'skipped' }; // 'skipped' counts as success in mergeWithRetry
+    });
+
+    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
+        '../../src/db/database.js': {
+            updateSitePageResult: vi.fn()
+        },
+        '../../src/api/julesClient.js': {
+            startAndMonitorSession: startSessionSpy
+        },
+        '../../src/api/githubClient.js': {
+            mergePRWithResult: mergePRSpy
+        },
+        '../../src/utils/logger.js': {
+            log: vi.fn()
+        }
+    });
+
+    vi.useFakeTimers();
+
+    const onTokenPicked = vi.fn();
+    const adminPage = { id: 10, url: '/', requires_admin: 1, requires_auth: 0 };
+    const project = { id: 'p1' };
+
+    const processPromise = siteCheck.processPage(adminPage, project, 'en', null, { onTokenPicked });
+
+    await vi.runAllTimersAsync();
+    await processPromise;
+
+    expect(onTokenPicked).toHaveBeenCalledWith('token-123');
+
+    // Analysis prompt check
+    const analysisPromptCall = startSessionSpy.mock.calls[0];
+    expect(analysisPromptCall[0]).toContain('--auth admin');
+    expect(analysisPromptCall[0]).toContain('agent-screenshots/en/');
+
+    // Fix prompt check
+    const fixPromptCall = startSessionSpy.mock.calls[1];
+    expect(fixPromptCall[0]).toContain('--auth admin');
+
+    // mergePRSpy retry check (1st returned failed, 2nd returned skipped)
+    expect(mergePRSpy).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+});
+
+test('processPage - formats prompt for standard auth user page', async () => {
+    const startSessionSpy = vi.fn().mockImplementation(async (prompt, agentId, project, options) => {
+        if (agentId === 'Site-Check-Analysis' && options?.onPRCreated) {
+            options.onPRCreated({ prUrl: 'url/789', prNumber: 789 });
+        }
+        return true;
+    });
+
+    const mergePRSpy = vi.fn().mockResolvedValue({ status: 'merged' });
+
+    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
+        '../../src/db/database.js': {
+            updateSitePageResult: vi.fn()
+        },
+        '../../src/api/julesClient.js': {
+            startAndMonitorSession: startSessionSpy
+        },
+        '../../src/api/githubClient.js': {
+            mergePRWithResult: mergePRSpy
+        },
+        '../../src/utils/logger.js': {
+            log: vi.fn()
+        }
+    });
+
+    vi.useFakeTimers();
+
+    const authPage = { id: 11, url: '/dashboard', requires_admin: 0, requires_auth: 1 };
+    const project = { id: 'p1' };
+
+    const processPromise = siteCheck.processPage(authPage, project, 'fr');
+
+    await vi.runAllTimersAsync();
+    await processPromise;
+
+    const analysisPrompt = startSessionSpy.mock.calls[0][0];
+    expect(analysisPrompt).toContain('--auth user');
+    expect(analysisPrompt).toContain('agent-screenshots/fr/dashboard');
+
+    const fixPrompt = startSessionSpy.mock.calls[1][0];
+    expect(fixPrompt).toContain('--auth user');
+
+    vi.useRealTimers();
+});
+
 test('processPage - handles merge error throw gracefully', async () => {
     const updateResultSpy = vi.fn();
     const startSessionSpy = vi.fn()
