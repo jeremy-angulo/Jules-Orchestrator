@@ -12,6 +12,7 @@ describe('healthMonitor service', () => {
   afterEach(() => {
     process.env = originalEnv;
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -106,7 +107,40 @@ describe('healthMonitor service', () => {
     }));
   });
 
-  it('should default to localhost URL when no environment variables are set', async () => {
+  it('should use WEBSITE_HEALTH_URL when explicitly set in environment', async () => {
+    delete process.env.RENDER_EXTERNAL_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    process.env.WEBSITE_HEALTH_URL = 'https://explicit-health.com/ping';
+
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor();
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://explicit-health.com/ping', expect.anything());
+  });
+
+  it('should default to localhost:3000/health when no env vars or PORT are set', async () => {
+    delete process.env.WEBSITE_HEALTH_URL;
+    delete process.env.RENDER_EXTERNAL_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    delete process.env.PORT;
+
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor();
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(fetchSpy).toHaveBeenCalledWith('http://localhost:3000/health', expect.anything());
+  });
+
+  it('should default to localhost with custom PORT when set', async () => {
     delete process.env.WEBSITE_HEALTH_URL;
     delete process.env.RENDER_EXTERNAL_URL;
     delete process.env.PUBLIC_BASE_URL;
@@ -121,6 +155,25 @@ describe('healthMonitor service', () => {
     await new Promise(resolve => setTimeout(resolve, 50));
 
     expect(fetchSpy).toHaveBeenCalledWith('http://localhost:8080/health', expect.anything());
+  });
+
+  it('should fallback error code to NETWORK_ERROR when thrown error lacks a name', async () => {
+    const serviceId = 'website';
+    const fetchSpy = vi.fn().mockRejectedValue('Simple string exception');
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const metricsStore = await import('../../src/services/metricsStore.js');
+    const recordErrorSpy = vi.spyOn(metricsStore, 'recordServiceError');
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor({ url: 'http://test-server.local/health' });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(recordErrorSpy).toHaveBeenCalledWith(serviceId, 'Website check failed', expect.objectContaining({
+      code: 'NETWORK_ERROR',
+      message: 'Simple string exception'
+    }));
   });
 
   it('should guard against duplicate monitor starts (singleton pattern)', async () => {
@@ -138,5 +191,27 @@ describe('healthMonitor service', () => {
     // Only the first call should trigger fetch
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy).toHaveBeenCalledWith('http://first-call.local/health', expect.anything());
+  });
+
+  it('should clamp intervalMs and timeoutMs to minimum bounds and trigger recurring probes', async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+
+    // Pass options below lower bounds (e.g., intervalMs = 100, timeoutMs = 5)
+    startWebsiteHealthMonitor({ url: 'http://test-server.local/health', intervalMs: 100, timeoutMs: 5 });
+
+    // Initial run triggers probe immediately
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Advance timers by less than the clamped interval (30,000ms)
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Advance past the 30,000ms minimum threshold
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
