@@ -76,6 +76,22 @@ describe('healthMonitor service', () => {
     }));
   });
 
+  it('should correctly format url when RENDER_EXTERNAL_URL ends with a trailing slash', async () => {
+    delete process.env.WEBSITE_HEALTH_URL;
+    delete process.env.PUBLIC_BASE_URL;
+    process.env.RENDER_EXTERNAL_URL = 'https://my-app.onrender.com/';
+
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor();
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://my-app.onrender.com/health', expect.anything());
+  });
+
   it('should handle probe fetch network failures gracefully', async () => {
     const serviceId = 'website';
     const netErr = new Error('DNS lookup failed');
