@@ -51,6 +51,28 @@ describe('tokenRotation.js', () => {
       const inventory = await getTokenInventory();
       expect(inventory).toHaveLength(1);
     });
+
+    it('should use custom token name when getTokenName returns a value', async () => {
+      const { getTokenInventory } = await setupTokenRotation(
+        { JULES_SECONDARY_TOKENS: ['secondary-token-123'] },
+        { getTokenName: vi.fn(async (index) => index === 1 ? 'Custom Secondary Label' : null) }
+      );
+
+      const inventory = await getTokenInventory();
+      expect(inventory[0].label).toBe('Token 1');
+      expect(inventory[1].label).toBe('Custom Secondary Label');
+    });
+
+    it('should handle token masking for short tokens and missing token strings', async () => {
+      const { getTokenInventory } = await setupTokenRotation({
+        JULES_MAIN_TOKEN: 'short',
+        JULES_SECONDARY_TOKENS: ['123456789']
+      });
+
+      const inventory = await getTokenInventory();
+      expect(inventory[0].maskedToken).toBe('****');
+      expect(inventory[1].maskedToken).toBe('1234...6789');
+    });
   });
 
   describe('getTokenStatusSummary', () => {
@@ -162,5 +184,22 @@ describe('tokenRotation.js', () => {
         const token = await getAvailableToken('test-agent');
         expect(token.token).toBe('s1');
       });
+
+    it('should ignore non-existent preferredTokenId and select lowest utilization token', async () => {
+      const { getAvailableToken } = await setupTokenRotation(
+        { JULES_SECONDARY_TOKENS: ['s1'] },
+        {},
+        {
+          getTokenUsage24h: vi.fn(async (t) => {
+            if (t === 'primary-token') return 80;
+            if (t === 's1') return 2;
+            return 0;
+          })
+        }
+      );
+
+      const token = await getAvailableToken('test-agent', { preferredTokenId: 'non-existent-key-999' });
+      expect(token.token).toBe('s1');
+    });
   });
 });
