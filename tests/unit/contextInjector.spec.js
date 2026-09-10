@@ -107,4 +107,33 @@ describe('contextInjector', () => {
     expect(context).toContain('## Orchestrator Live Context');
     expect(context).not.toContain('API budget remaining');
   });
+
+  it('formats single letter partition range when start equals end', async () => {
+    executeWithRetry.mockResolvedValue({ rows: [] });
+    getTokenStatusSummary.mockResolvedValue({ keys: [], totalUsage24h: 0 });
+
+    const context = await buildContextBlock({
+      projectId: 'p1',
+      agentName: 'a1',
+      instanceIndex: 0,
+      totalInstances: 26
+    });
+
+    expect(context).toContain('- **Parallel slot:** 1 of 26 — prioritize files and directories whose names start with **A**');
+  });
+
+  it('falls back to default limits when token status fields are missing or undefined', async () => {
+    executeWithRetry.mockResolvedValue({ rows: [] });
+    getTokenStatusSummary.mockResolvedValue({
+      keys: [{ limit24h: null }, {}]
+    });
+
+    const context = await buildContextBlock({ projectId: 'p1', agentName: 'a1' });
+
+    expect(context).toContain('- **API budget remaining today:** 0 sessions');
+
+    getTokenStatusSummary.mockResolvedValue({});
+    const contextDefault = await buildContextBlock({ projectId: 'p1', agentName: 'a1' });
+    expect(contextDefault).toContain('- **API budget remaining today:** 295 sessions');
+  });
 });
