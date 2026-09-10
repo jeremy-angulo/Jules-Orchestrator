@@ -329,6 +329,26 @@ describe('githubClient API Service', () => {
       const res = await listOpenPRs(dummyProject);
       expect(res).toEqual([]);
     });
+
+    it('should safely map PRs when user, head, base or counts are undefined or null', async () => {
+      const mockList = [{ number: 201, title: 'Incomplete PR' }];
+      const mockDetail = { number: 201, title: 'Incomplete PR' };
+
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({ ok: true, json: async () => mockList })
+        .mockResolvedValueOnce({ ok: true, json: async () => mockDetail });
+
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = await listOpenPRs(dummyProject);
+      expect(res).toHaveLength(1);
+      expect(res[0].user).toEqual({ login: undefined, avatar_url: undefined });
+      expect(res[0].head).toEqual({ ref: undefined });
+      expect(res[0].base).toEqual({ ref: undefined });
+      expect(res[0].additions).toBeNull();
+      expect(res[0].deletions).toBeNull();
+      expect(res[0].changed_files).toBeNull();
+    });
   });
 
   describe('closePR', () => {
