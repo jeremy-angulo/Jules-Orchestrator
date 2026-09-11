@@ -230,4 +230,71 @@ describe('healthMonitor service', () => {
     await vi.advanceTimersByTimeAsync(15000);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('should handle AbortError when probe request times out', async () => {
+    const serviceId = 'website';
+    const abortErr = new Error('The operation was aborted');
+    abortErr.name = 'AbortError';
+
+    const fetchSpy = vi.fn().mockRejectedValue(abortErr);
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const metricsStore = await import('../../src/services/metricsStore.js');
+    const recordCheckSpy = vi.spyOn(metricsStore, 'recordServiceCheck');
+    const recordErrorSpy = vi.spyOn(metricsStore, 'recordServiceError');
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor({ url: 'http://test-server.local/health-timeout' });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(recordCheckSpy).toHaveBeenCalledWith(serviceId, false, expect.objectContaining({
+      statusCode: null
+    }));
+    expect(recordErrorSpy).toHaveBeenCalledWith(serviceId, 'Website check failed', expect.objectContaining({
+      code: 'AbortError',
+      url: 'http://test-server.local/health-timeout',
+      message: 'The operation was aborted'
+    }));
+  });
+
+  it('should handle null or nameless thrown error gracefully', async () => {
+    const serviceId = 'website';
+    const fetchSpy = vi.fn().mockRejectedValue(null);
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const metricsStore = await import('../../src/services/metricsStore.js');
+    const recordErrorSpy = vi.spyOn(metricsStore, 'recordServiceError');
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor({ url: 'http://test-server.local/health-null-err' });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(recordErrorSpy).toHaveBeenCalledWith(serviceId, 'Website check failed', expect.objectContaining({
+      code: 'NETWORK_ERROR',
+      message: 'null'
+    }));
+  });
+
+  it('should fallback intervalMs and timeoutMs defaults when invalid options are provided', async () => {
+    vi.useFakeTimers();
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+
+    // Pass invalid intervalMs and timeoutMs (non-numeric strings)
+    startWebsiteHealthMonitor({ url: 'http://test-server.local/health-defaults', intervalMs: 'invalid', timeoutMs: 'invalid' });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Advance timers by less than default intervalMs (120,000ms)
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Advance to 120,000ms threshold
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
 });
