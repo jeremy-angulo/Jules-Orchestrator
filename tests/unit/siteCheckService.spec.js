@@ -52,6 +52,87 @@ test('processPage - completes full cycle: analysis -> merge -> fix', async () =>
     vi.useRealTimers();
 });
 
+test('runSiteCheckCycle - works with default parameters and custom runnerId', async () => {
+    const releaseLocksSpy = vi.fn();
+    const pickPageSpy = vi.fn().mockResolvedValue(null);
+    const logSpy = vi.fn();
+
+    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
+        '../../src/db/database.js': {
+            releaseStaleSitePageLocks: releaseLocksSpy,
+            pickAndLockSitePage: pickPageSpy
+        },
+        '../../src/utils/logger.js': {
+            log: logSpy
+        }
+    });
+
+    const project = { id: 'p2' };
+    let callsCount = 0;
+    const shouldStop = vi.fn().mockImplementation(() => {
+        callsCount++;
+        return callsCount > 1;
+    });
+
+    vi.useFakeTimers();
+
+    // Call runSiteCheckCycle with options with custom runnerId and shouldStop
+    const runCustomPromise = siteCheck.runSiteCheckCycle(project, { shouldStop, runnerId: 'custom-runner' });
+
+    await vi.advanceTimersByTimeAsync(60000);
+    await runCustomPromise;
+
+    expect(releaseLocksSpy).toHaveBeenCalledWith(30);
+    expect(pickPageSpy).toHaveBeenCalledWith('p2', 'custom-runner');
+
+    vi.useRealTimers();
+});
+
+test('processPage - works with default parameters and siteCheckAuth option', async () => {
+    const updateResultSpy = vi.fn();
+    const startSessionSpy = vi.fn().mockImplementation(async (prompt, agentId, project, options) => {
+        if (agentId === 'Site-Check-Analysis' && options?.onPRCreated) {
+            options.onPRCreated({ prUrl: 'url/999', prNumber: 999 });
+        }
+        return true;
+    });
+
+    const mergePRSpy = vi.fn().mockResolvedValue({ status: 'merged' });
+
+    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
+        '../../src/db/database.js': {
+            updateSitePageResult: updateResultSpy
+        },
+        '../../src/api/julesClient.js': {
+            startAndMonitorSession: startSessionSpy
+        },
+        '../../src/api/githubClient.js': {
+            mergePRWithResult: mergePRSpy
+        },
+        '../../src/utils/logger.js': {
+            log: vi.fn()
+        }
+    });
+
+    vi.useFakeTimers();
+
+    const page = { id: 99, url: '/default-page', requires_admin: 0, requires_auth: 0 };
+    const project = { id: 'p1' };
+
+    // Pass siteCheckAuth and omit options to test default parameter values
+    const processPromise = siteCheck.processPage(page, project, undefined, { token: 'secret' });
+
+    await vi.runAllTimersAsync();
+    await processPromise;
+
+    expect(updateResultSpy).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'ANALYZE' }));
+    expect(updateResultSpy).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'ANALYZED' }));
+    expect(updateResultSpy).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'FIX' }));
+    expect(startSessionSpy.mock.calls[0][0]).toContain('agent-screenshots/fr/default-page');
+
+    vi.useRealTimers();
+});
+
 test('processPage - formats prompt correctly for admin/auth/root pages and forwards onTokenPicked', async () => {
     const startSessionSpy = vi.fn().mockImplementation(async (prompt, agentId, project, options) => {
         if (options?.onTokenPicked) options.onTokenPicked('token-123');
