@@ -206,6 +206,15 @@ describe('julesClient.js', () => {
             expect(body.automationMode).toBeUndefined();
         });
 
+        it('createSession should include automationMode in body payload when provided', async () => {
+            await julesClient.createSession('Agent', 'prompt', 'title', 'repo', 'dev', 'AUTO_CREATE_PR');
+            const body = JSON.parse(vi.mocked(fetch).mock.calls[0][1].body);
+            expect(body.prompt).toBe('prompt');
+            expect(body.sourceContext.source).toBe('sources/repo');
+            expect(body.sourceContext.githubRepoContext.startingBranch).toBe('dev');
+            expect(body.automationMode).toBe('AUTO_CREATE_PR');
+        });
+
         it('getSession should call correct endpoint', async () => {
             await julesClient.getSession('Agent', 's1');
             expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/sessions/s1'), expect.any(Object));
