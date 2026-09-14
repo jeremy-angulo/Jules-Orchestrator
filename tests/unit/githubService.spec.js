@@ -72,3 +72,64 @@ test('githubService - invalidatePRCache clears the cache', async () => {
     await githubService.getCachedPRs(project);
     expect(callCount).toBe(2);
 });
+
+test('githubService - getCachedPRs cleans up inflight request on failure and allows retry', async () => {
+    let callCount = 0;
+    const githubService = await esmock('../../src/services/githubService.js', {
+        '../../src/api/githubClient.js': {
+            listOpenPRs: async () => {
+                callCount++;
+                if (callCount === 1) {
+                    throw new Error('GitHub API Temporary Error');
+                }
+                return [{ number: 99, title: 'Success after retry' }];
+            }
+        }
+    });
+
+    const project = { id: 'test-project-error-retry' };
+
+    // First call - should fail and clean up inflight cache
+    await expect(githubService.getCachedPRs(project)).rejects.toThrow('GitHub API Temporary Error');
+    expect(callCount).toBe(1);
+
+    // Second call - should retry fetching since inflight was deleted
+    const prs = await githubService.getCachedPRs(project);
+    expect(callCount).toBe(2);
+    expect(prs).toEqual([{ number: 99, title: 'Success after retry' }]);
+});
+
+test('githubService - getCachedPRs refetches after TTL expiration', async () => {
+    let callCount = 0;
+    const githubService = await esmock('../../src/services/githubService.js', {
+        '../../src/api/githubClient.js': {
+            listOpenPRs: async () => {
+                callCount++;
+                return [{ number: callCount }];
+            }
+        }
+    });
+
+    const project = { id: 'test-project-ttl-expiration' };
+
+    vi.useFakeTimers();
+    try {
+        const prs1 = await githubService.getCachedPRs(project);
+        expect(callCount).toBe(1);
+        expect(prs1).toEqual([{ number: 1 }]);
+
+        // Advance time by 1 minute (within TTL of 2 minutes)
+        vi.advanceTimersByTime(60 * 1000);
+        const prsCached = await githubService.getCachedPRs(project);
+        expect(callCount).toBe(1);
+        expect(prsCached).toEqual([{ number: 1 }]);
+
+        // Advance time past 2 minutes (TTL expired)
+        vi.advanceTimersByTime(61 * 1000);
+        const prsFresh = await githubService.getCachedPRs(project);
+        expect(callCount).toBe(2);
+        expect(prsFresh).toEqual([{ number: 2 }]);
+    } finally {
+        vi.useRealTimers();
+    }
+});
