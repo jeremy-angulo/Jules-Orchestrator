@@ -52,6 +52,41 @@ test('processPage - completes full cycle: analysis -> merge -> fix', async () =>
     vi.useRealTimers();
 });
 
+test('runSiteCheckCycle - handles pauseMs = 0 without calling setTimeout pause', async () => {
+    const releaseLocksSpy = vi.fn();
+    const pickPageSpy = vi.fn().mockResolvedValue({ id: 30, url: '/zero-pause' });
+    const updateResultSpy = vi.fn();
+    const startSessionSpy = vi.fn().mockResolvedValue(false); // No PR -> complete cycle instantly
+    const logSpy = vi.fn();
+
+    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
+        '../../src/db/database.js': {
+            releaseStaleSitePageLocks: releaseLocksSpy,
+            pickAndLockSitePage: pickPageSpy,
+            updateSitePageResult: updateResultSpy
+        },
+        '../../src/api/julesClient.js': {
+            startAndMonitorSession: startSessionSpy
+        },
+        '../../src/utils/logger.js': {
+            log: logSpy
+        }
+    });
+
+    const project = { id: 'p1' };
+    let callsCount = 0;
+    const shouldStop = vi.fn().mockImplementation(() => {
+        callsCount++;
+        return callsCount > 1; // Stop on second check
+    });
+
+    await siteCheck.runSiteCheckCycle(project, { shouldStop, pauseMs: 0 });
+
+    expect(pickPageSpy).toHaveBeenCalledTimes(1);
+    expect(updateResultSpy).toHaveBeenCalledWith(30, expect.objectContaining({ status: 'OK' }));
+    expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('Runner arrêté'));
+});
+
 test('runSiteCheckCycle - works with default parameters and custom runnerId', async () => {
     const releaseLocksSpy = vi.fn();
     const pickPageSpy = vi.fn().mockResolvedValue(null);
