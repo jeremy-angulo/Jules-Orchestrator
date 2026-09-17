@@ -17,7 +17,20 @@ test('Login page has French UI elements and can be filled', async ({ page }) => 
   // Verify values are filled
   expect(await page.inputValue('#email')).toBe('test@example.com');
   expect(await page.inputValue('#password')).toBe('password123');
+});
 
-  // Note: We don't submit because we don't have a backend user seeded for this E2E test yet
-  // and we want to avoid side effects or complex setup for a basic UI check.
+test('Login page shows error feedback on invalid credentials when setup is complete', async ({ page, request }) => {
+  // Bootstrap admin first to ensure setup is completed
+  await request.post('/auth/bootstrap-admin', {
+    data: { email: 'admin@example.com', password: 'AdminPassword123!' }
+  });
+
+  await page.goto('/login');
+
+  await page.fill('#email', 'wrong@example.com');
+  await page.fill('#password', 'wrongpassword');
+  await page.click('#submitBtn');
+
+  await expect(page.locator('#feedback')).toBeVisible();
+  await expect(page.locator('#feedback')).not.toBeEmpty();
 });
