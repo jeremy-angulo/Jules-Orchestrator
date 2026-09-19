@@ -297,4 +297,20 @@ describe('healthMonitor service', () => {
     await vi.advanceTimersByTimeAsync(60000);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
+
+  it('should format url correctly when PUBLIC_BASE_URL is set without trailing slash', async () => {
+    delete process.env.WEBSITE_HEALTH_URL;
+    delete process.env.RENDER_EXTERNAL_URL;
+    process.env.PUBLIC_BASE_URL = 'https://public-base.com';
+
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor();
+
+    await new Promise(resolve => process.nextTick(resolve));
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://public-base.com/health', expect.anything());
+  });
 });
