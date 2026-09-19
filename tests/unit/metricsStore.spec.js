@@ -182,6 +182,22 @@ test('metricsStore - dashboard metrics filtering by time window', async () => {
     dateSpy.mockRestore();
 });
 
+test('metricsStore - recordServiceError handles undefined error payload gracefully', async () => {
+    const serviceId = 'undefined-err-service-' + Date.now();
+
+    await metricsStore.recordServiceError(serviceId, undefined);
+
+    const errors = await metricsStore.listServiceErrors(serviceId, 1, 10);
+    expect(errors.length).toBe(1);
+    expect(errors[0].error_message).toBe('undefined');
+});
+
+test('metricsStore - getTokenUsage24h returns 0 when token usage does not exist', async () => {
+    const nonexistentToken = 'nonexistent-token-' + Date.now();
+    const usage = await metricsStore.getTokenUsage24h(nonexistentToken);
+    expect(usage).toBe(0);
+});
+
 test('metricsStore - API call 24h filtering excludes old calls', async () => {
     const oldToken = 'old-token-' + Date.now();
     const oldAgent = 'old-agent-' + Date.now();
