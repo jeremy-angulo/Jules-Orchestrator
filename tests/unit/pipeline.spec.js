@@ -263,3 +263,19 @@ test('runBuildAndMergePipelineOnce - total global 3-hour timeout stops loop', as
 
     expect(mockStartAndMonitorSession).not.toHaveBeenCalled();
 });
+
+test('runBuildAndMergePipelineOnce - handles critical exception and performs cleanup in finally block', async () => {
+    const { runBuildAndMergePipelineOnce } = await setupPipeline();
+    mockDb.lockProject.mockRejectedValueOnce(new Error('DB Lock Failed'));
+
+    const project = {
+        id: 'p1',
+        buildAndMergePipeline: { prompt: 'fix it' }
+    };
+
+    await runBuildAndMergePipelineOnce(project);
+
+    expect(mockLog).toHaveBeenCalledWith('error', '[p1 - Pipeline] ❌ Erreur critique lors de la Pipeline :', expect.any(Error));
+    expect(mockDb.decrementTasks).toHaveBeenCalledWith('p1');
+    expect(mockDb.unlockProject).toHaveBeenCalledWith('p1');
+});
