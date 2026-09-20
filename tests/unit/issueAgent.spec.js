@@ -60,6 +60,13 @@ describe('issueAgent.js', () => {
         expect(result).toContain('Please fix it');
     });
 
+    it('formatIssueInstruction should fallback to empty description if body is missing or null', () => {
+        const issue = { title: 'No body issue' };
+        const result = issueAgent.formatIssueInstruction(issue);
+        expect(result).toContain('Titre: No body issue');
+        expect(result).toContain('Description: ');
+    });
+
     it('runIssueAgent should process an issue successfully and then stop on mocked error', async () => {
         const project = { id: 'HomeFreeWorld' };
         const issue = { title: 'Fix CSS', number: 42 };
@@ -120,5 +127,69 @@ describe('issueAgent.js', () => {
         expect(mockStartSession).toHaveBeenCalled();
         expect(mockCloseIssue).not.toHaveBeenCalled();
         expect(mockUnlock).toHaveBeenCalledWith('HomeFreeWorld');
+    });
+
+    it('runIssueAgent should wait in sleep loop when active tasks > 1', async () => {
+        const project = { id: 'HomeFreeWorld' };
+        const issue = { title: 'Fix CSS', number: 42 };
+
+        mockGetNextIssue.mockResolvedValueOnce(issue);
+        mockGetActiveTasks.mockResolvedValueOnce(2).mockResolvedValueOnce(1);
+        mockStartSession.mockResolvedValueOnce(true);
+
+        mockSleep.mockImplementation((ms) => {
+            if (ms === 30000) return Promise.reject(new Error('BREAK_LOOP'));
+            return Promise.resolve();
+        });
+        mockLog.mockImplementation((level, msg, err) => {
+            if (err && err.message === 'BREAK_LOOP') throw new Error('STOP_LOOP');
+        });
+
+        await expect(issueAgent.runIssueAgent(project)).rejects.toThrow('STOP_LOOP');
+
+        expect(mockSleep).toHaveBeenCalledWith(15000);
+        expect(mockStartSession).toHaveBeenCalled();
+    });
+
+    it('runIssueAgent should forward onTokenPicked option to startAndMonitorSession', async () => {
+        const project = { id: 'HomeFreeWorld' };
+        const issue = { title: 'Fix CSS', number: 42 };
+        const onTokenPicked = vi.fn();
+
+        mockGetNextIssue.mockResolvedValueOnce(issue);
+        mockStartSession.mockResolvedValueOnce(true);
+
+        mockSleep.mockImplementation((ms) => {
+            if (ms === 30000) return Promise.reject(new Error('BREAK_LOOP'));
+            return Promise.resolve();
+        });
+        mockLog.mockImplementation((level, msg, err) => {
+            if (err && err.message === 'BREAK_LOOP') throw new Error('STOP_LOOP');
+        });
+
+        await expect(issueAgent.runIssueAgent(project, { onTokenPicked })).rejects.toThrow('STOP_LOOP');
+
+        expect(mockStartSession).toHaveBeenCalledWith(
+            expect.any(String),
+            'Issue Agent',
+            project,
+            { onTokenPicked }
+        );
+    });
+
+    it('runIssueAgent should catch critical errors, unlock project and sleep 60s', async () => {
+        const project = { id: 'HomeFreeWorld' };
+        mockGetNextIssue.mockRejectedValueOnce(new Error('GitHub API Error'));
+
+        mockSleep.mockImplementation((ms) => {
+            if (ms === 60000) throw new Error('STOP_LOOP');
+            return Promise.resolve();
+        });
+
+        await expect(issueAgent.runIssueAgent(project)).rejects.toThrow('STOP_LOOP');
+
+        expect(mockLog).toHaveBeenCalledWith('error', '[HomeFreeWorld] ❌ Erreur critique dans la boucle Issue :', expect.any(Error));
+        expect(mockUnlock).toHaveBeenCalledWith('HomeFreeWorld');
+        expect(mockSleep).toHaveBeenCalledWith(60000);
     });
 });
