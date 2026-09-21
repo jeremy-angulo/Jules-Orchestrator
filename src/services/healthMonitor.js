@@ -59,6 +59,10 @@ async function probeWebsite(url, timeoutMs) {
   }
 }
 
+export function _resetWebsiteMonitorForTesting() {
+  websiteMonitorStarted = false;
+}
+
 export function startWebsiteHealthMonitor(options = {}) {
   if (websiteMonitorStarted) {
     return;

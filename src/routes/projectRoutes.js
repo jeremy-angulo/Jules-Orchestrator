@@ -1,7 +1,6 @@
 import express from 'express';
 import { controlCenter } from '../controlCenter.js';
 import { getSource } from '../api/julesClient.js';
-import { mergeOpenPRs } from '../api/githubClient.js';
 import { getCachedPRs, invalidatePRCache } from '../services/githubService.js';
 import { apiRateLimiter } from '../middleware/securityMiddleware.js';
 import { requirePermission, requireCriticalConfirmation, audit } from '../middleware/authMiddleware.js';
