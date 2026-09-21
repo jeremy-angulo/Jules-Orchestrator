@@ -3,10 +3,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 describe('healthMonitor service', () => {
   const originalEnv = { ...process.env };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env = { ...originalEnv };
     vi.restoreAllMocks();
     vi.resetModules();
+    const { _resetWebsiteMonitorForTesting } = await import('../../src/services/healthMonitor.js');
+    if (_resetWebsiteMonitorForTesting) {
+      _resetWebsiteMonitorForTesting();
+    }
   });
 
   afterEach(() => {
