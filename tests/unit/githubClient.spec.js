@@ -14,6 +14,7 @@ import {
   getPRFiles,
   mergeOpenPRs
 } from '../../src/api/githubClient.js';
+import * as metricsStore from '../../src/services/metricsStore.js';
 
 describe('githubClient API Service', () => {
   const dummyProject = {
@@ -69,6 +70,44 @@ describe('githubClient API Service', () => {
 
       const issue = await getNextGitHubIssue(dummyProject);
       expect(issue).toBeNull();
+    });
+  });
+
+  describe('githubRequest metrics and resilience', () => {
+    it('should record service metrics check and error when fetch returns HTTP non-ok status', async () => {
+      const recordCheckSpy = vi.spyOn(metricsStore, 'recordServiceCheck');
+      const recordErrorSpy = vi.spyOn(metricsStore, 'recordServiceError');
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: 'Internal Error',
+        text: async () => 'Error'
+      }));
+
+      await getNextGitHubIssue(dummyProject);
+
+      expect(recordCheckSpy).toHaveBeenCalledWith('github_api', false, expect.objectContaining({ statusCode: 500 }));
+      expect(recordErrorSpy).toHaveBeenCalledWith('github_api', expect.stringContaining('failed'), expect.objectContaining({ statusCode: 500, code: '500' }));
+
+      recordCheckSpy.mockRestore();
+      recordErrorSpy.mockRestore();
+    });
+
+    it('should record failed service check and handle network error gracefully', async () => {
+      const recordCheckSpy = vi.spyOn(metricsStore, 'recordServiceCheck');
+      const recordErrorSpy = vi.spyOn(metricsStore, 'recordServiceError');
+
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
+
+      const issue = await getNextGitHubIssue(dummyProject);
+
+      expect(issue).toBeNull();
+      expect(recordCheckSpy).toHaveBeenCalledWith('github_api', false, expect.objectContaining({ statusCode: null }));
+      expect(recordErrorSpy).toHaveBeenCalledWith('github_api', expect.stringContaining('network error'), expect.objectContaining({ message: expect.stringContaining('Failed to fetch') }));
+
+      recordCheckSpy.mockRestore();
+      recordErrorSpy.mockRestore();
     });
   });
 
