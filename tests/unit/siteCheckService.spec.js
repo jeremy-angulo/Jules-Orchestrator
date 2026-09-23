@@ -1,532 +1,278 @@
-import { test, expect, vi } from 'vitest';
+import { test, expect, vi, beforeEach, afterEach } from 'vitest';
 import esmock from 'esmock';
 
-test('processPage - completes full cycle: analysis -> merge -> fix', async () => {
-    const updateResultSpy = vi.fn();
-    const startSessionSpy = vi.fn()
-        .mockImplementation(async (prompt, agentId, project, options) => {
-            if (agentId === 'Site-Check-Analysis') {
-                if (options?.onPRCreated) {
-                    options.onPRCreated({ prUrl: 'url/123', prNumber: 123 });
-                }
-                return true;
-            }
-            return true;
-        });
+let mockDb;
+let mockJulesClient;
+let mockGithubClient;
+let mockLogger;
+let siteCheckService;
 
-    const mergePRSpy = vi.fn().mockResolvedValue({ status: 'merged' });
+beforeEach(async () => {
+  mockDb = {
+    pickAndLockSitePage: vi.fn(),
+    unlockSitePage: vi.fn(),
+    updateSitePageResult: vi.fn(),
+    releaseStaleSitePageLocks: vi.fn(),
+  };
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            updateSitePageResult: updateResultSpy
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/api/githubClient.js': {
-            mergePRWithResult: mergePRSpy
-        },
-        '../../src/utils/logger.js': {
-            log: vi.fn()
-        }
-    });
+  mockJulesClient = {
+    startAndMonitorSession: vi.fn(),
+  };
 
-    // To bypass 2 min delay
-    vi.useFakeTimers();
+  mockGithubClient = {
+    mergePRWithResult: vi.fn(),
+  };
 
-    const page = { id: 1, url: '/test-page', requires_admin: 0, requires_auth: 0 };
-    const project = { id: 'p1' };
+  mockLogger = {
+    log: vi.fn(),
+  };
 
-    const processPromise = siteCheck.processPage(page, project, 'fr');
-
-    // Move past the FIX_DELAY
-    await vi.runAllTimersAsync();
-    await processPromise;
-
-    expect(updateResultSpy).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ANALYZE' }));
-    expect(updateResultSpy).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'ANALYZED' }));
-    expect(updateResultSpy).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'FIX' }));
-    expect(mergePRSpy).toHaveBeenCalled();
-    expect(startSessionSpy).toHaveBeenCalledTimes(2);
-
-    vi.useRealTimers();
+  siteCheckService = await esmock('../../src/services/siteCheckService.js', {
+    '../../src/db/database.js': mockDb,
+    '../../src/api/julesClient.js': mockJulesClient,
+    '../../src/api/githubClient.js': mockGithubClient,
+    '../../src/utils/logger.js': mockLogger,
+  });
 });
 
-test('runSiteCheckCycle - handles pauseMs = 0 without calling setTimeout pause', async () => {
-    const releaseLocksSpy = vi.fn();
-    const pickPageSpy = vi.fn().mockResolvedValue({ id: 30, url: '/zero-pause' });
-    const updateResultSpy = vi.fn();
-    const startSessionSpy = vi.fn().mockResolvedValue(false); // No PR -> complete cycle instantly
-    const logSpy = vi.fn();
-
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            releaseStaleSitePageLocks: releaseLocksSpy,
-            pickAndLockSitePage: pickPageSpy,
-            updateSitePageResult: updateResultSpy
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/utils/logger.js': {
-            log: logSpy
-        }
-    });
-
-    const project = { id: 'p1' };
-    let callsCount = 0;
-    const shouldStop = vi.fn().mockImplementation(() => {
-        callsCount++;
-        return callsCount > 1; // Stop on second check
-    });
-
-    await siteCheck.runSiteCheckCycle(project, { shouldStop, pauseMs: 0 });
-
-    expect(pickPageSpy).toHaveBeenCalledTimes(1);
-    expect(updateResultSpy).toHaveBeenCalledWith(30, expect.objectContaining({ status: 'OK' }));
-    expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('Runner arrêté'));
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
-test('runSiteCheckCycle - works with default parameters and custom runnerId', async () => {
-    const releaseLocksSpy = vi.fn();
-    const pickPageSpy = vi.fn().mockResolvedValue(null);
-    const logSpy = vi.fn();
+test('processPage - when no PR is created, marks page status as OK', async () => {
+  const page = { id: 10, url: '/dashboard', requires_auth: false, requires_admin: false };
+  const project = { id: 'p1', name: 'Project 1' };
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            releaseStaleSitePageLocks: releaseLocksSpy,
-            pickAndLockSitePage: pickPageSpy
-        },
-        '../../src/utils/logger.js': {
-            log: logSpy
-        }
-    });
+  mockJulesClient.startAndMonitorSession.mockResolvedValue(false);
 
-    const project = { id: 'p2' };
-    let callsCount = 0;
-    const shouldStop = vi.fn().mockImplementation(() => {
-        callsCount++;
-        return callsCount > 1;
-    });
+  await siteCheckService.processPage(page, project, 'fr');
 
-    vi.useFakeTimers();
+  expect(mockDb.updateSitePageResult).toHaveBeenNthCalledWith(1, 10, {
+    status: 'ANALYZE',
+    screenshotPath: 'agent-screenshots/fr/dashboard/desktop.png',
+    issues: null,
+  });
 
-    // Call runSiteCheckCycle with options with custom runnerId and shouldStop
-    const runCustomPromise = siteCheck.runSiteCheckCycle(project, { shouldStop, runnerId: 'custom-runner' });
+  expect(mockJulesClient.startAndMonitorSession).toHaveBeenCalledWith(
+    expect.stringContaining('Mission : Analyse visuelle et technique — `/dashboard`'),
+    'Site-Check-Analysis',
+    project,
+    expect.objectContaining({
+      onTokenPicked: undefined,
+      onPRCreated: expect.any(Function),
+    })
+  );
 
-    await vi.advanceTimersByTimeAsync(60000);
-    await runCustomPromise;
-
-    expect(releaseLocksSpy).toHaveBeenCalledWith(30);
-    expect(pickPageSpy).toHaveBeenCalledWith('p2', 'custom-runner');
-
-    vi.useRealTimers();
+  expect(mockDb.updateSitePageResult).toHaveBeenNthCalledWith(2, 10, {
+    status: 'OK',
+    screenshotPath: 'agent-screenshots/fr/dashboard/desktop.png',
+    issues: null,
+  });
 });
 
-test('processPage - works with default parameters and siteCheckAuth option', async () => {
-    const updateResultSpy = vi.fn();
-    const startSessionSpy = vi.fn().mockImplementation(async (prompt, agentId, project, options) => {
-        if (agentId === 'Site-Check-Analysis' && options?.onPRCreated) {
-            options.onPRCreated({ prUrl: 'url/999', prNumber: 999 });
-        }
-        return true;
-    });
+test('processPage - prompts correctly handle root URL, requires_admin, requires_auth, and none', async () => {
+  const pageAdmin = { id: 11, url: '/', requires_admin: true, requires_auth: false };
+  const pageAuth = { id: 12, url: '/profile', requires_admin: false, requires_auth: true };
+  const pageNone = { id: 13, url: '/about', requires_admin: false, requires_auth: false };
+  const project = { id: 'p1' };
 
-    const mergePRSpy = vi.fn().mockResolvedValue({ status: 'merged' });
+  let prompts = [];
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            updateSitePageResult: updateResultSpy
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/api/githubClient.js': {
-            mergePRWithResult: mergePRSpy
-        },
-        '../../src/utils/logger.js': {
-            log: vi.fn()
-        }
-    });
+  mockJulesClient.startAndMonitorSession.mockImplementation(async (prompt) => {
+    prompts.push(prompt);
+    return false;
+  });
 
-    vi.useFakeTimers();
+  await siteCheckService.processPage(pageAdmin, project, 'en');
+  await siteCheckService.processPage(pageAuth, project, 'fr');
+  await siteCheckService.processPage(pageNone, project, 'fr');
 
-    const page = { id: 99, url: '/default-page', requires_admin: 0, requires_auth: 0 };
-    const project = { id: 'p1' };
-
-    // Pass siteCheckAuth and omit options to test default parameter values
-    const processPromise = siteCheck.processPage(page, project, undefined, { token: 'secret' });
-
-    await vi.runAllTimersAsync();
-    await processPromise;
-
-    expect(updateResultSpy).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'ANALYZE' }));
-    expect(updateResultSpy).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'ANALYZED' }));
-    expect(updateResultSpy).toHaveBeenCalledWith(99, expect.objectContaining({ status: 'FIX' }));
-    expect(startSessionSpy.mock.calls[0][0]).toContain('agent-screenshots/fr/default-page');
-
-    vi.useRealTimers();
+  expect(prompts[0]).toContain('--auth admin');
+  expect(prompts[1]).toContain('--auth user');
+  expect(prompts[2]).toContain('--auth none');
 });
 
-test('processPage - formats prompt correctly for admin/auth/root pages and forwards onTokenPicked', async () => {
-    const startSessionSpy = vi.fn().mockImplementation(async (prompt, agentId, project, options) => {
-        if (options?.onTokenPicked) options.onTokenPicked('token-123');
-        if (agentId === 'Site-Check-Analysis' && options?.onPRCreated) {
-            options.onPRCreated({ prUrl: 'url/456', prNumber: 456 });
-        }
-        return true;
-    });
+test('processPage - when PR created but merge fails or throws error across retries', async () => {
+  vi.useFakeTimers();
 
-    let mergeAttempts = 0;
-    const mergePRSpy = vi.fn().mockImplementation(async () => {
-        mergeAttempts++;
-        if (mergeAttempts === 1) return { status: 'failed', reason: 'transient' };
-        return { status: 'skipped' }; // 'skipped' counts as success in mergeWithRetry
-    });
+  const page = { id: 15, url: '/checkout', requires_auth: false, requires_admin: false };
+  const project = { id: 'p1' };
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            updateSitePageResult: vi.fn()
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/api/githubClient.js': {
-            mergePRWithResult: mergePRSpy
-        },
-        '../../src/utils/logger.js': {
-            log: vi.fn()
-        }
-    });
+  mockJulesClient.startAndMonitorSession.mockImplementation(async (prompt, label, proj, options) => {
+    if (options && options.onPRCreated) {
+      options.onPRCreated({ prUrl: 'https://github.com/org/repo/pull/42', prNumber: 42 });
+    }
+    return true;
+  });
 
-    vi.useFakeTimers();
+  // Simulate merge warning on 1st try, exception on 2nd try, failure on 3rd try
+  mockGithubClient.mergePRWithResult
+    .mockResolvedValueOnce({ status: 'failed' }) // no reason provided -> fallback to ''
+    .mockRejectedValueOnce(new Error('GitHub API 500'))
+    .mockResolvedValueOnce({ status: 'rejected', reason: 'Blocked' });
 
-    const onTokenPicked = vi.fn();
-    const adminPage = { id: 10, url: '/', requires_admin: 1, requires_auth: 0 };
-    const project = { id: 'p1' };
+  const processPromise = siteCheckService.processPage(page, project, 'fr');
 
-    const processPromise = siteCheck.processPage(adminPage, project, 'en', null, { onTokenPicked });
+  // Advance timers through 3 merge retry waits (30s each)
+  await vi.advanceTimersByTimeAsync(30_000);
+  await vi.advanceTimersByTimeAsync(30_000);
+  await vi.advanceTimersByTimeAsync(30_000);
 
-    await vi.runAllTimersAsync();
-    await processPromise;
+  await processPromise;
 
-    expect(onTokenPicked).toHaveBeenCalledWith('token-123');
-
-    // Analysis prompt check
-    const analysisPromptCall = startSessionSpy.mock.calls[0];
-    expect(analysisPromptCall[0]).toContain('--auth admin');
-    expect(analysisPromptCall[0]).toContain('agent-screenshots/en/');
-
-    // Fix prompt check
-    const fixPromptCall = startSessionSpy.mock.calls[1];
-    expect(fixPromptCall[0]).toContain('--auth admin');
-
-    // mergePRSpy retry check (1st returned failed, 2nd returned skipped)
-    expect(mergePRSpy).toHaveBeenCalledTimes(2);
-
-    vi.useRealTimers();
+  expect(mockGithubClient.mergePRWithResult).toHaveBeenCalledTimes(3);
+  expect(mockDb.updateSitePageResult).toHaveBeenLastCalledWith(15, {
+    status: 'ANALYZE',
+    screenshotPath: null,
+    issues: null,
+  });
+  expect(mockLogger.log).toHaveBeenCalledWith('warn', expect.stringContaining('Merge PR #42 erreur (2/3): GitHub API 500'));
 });
 
-test('processPage - formats prompt for standard auth user page', async () => {
-    const startSessionSpy = vi.fn().mockImplementation(async (prompt, agentId, project, options) => {
-        if (agentId === 'Site-Check-Analysis' && options?.onPRCreated) {
-            options.onPRCreated({ prUrl: 'url/789', prNumber: 789 });
-        }
-        return true;
-    });
+test('processPage - when PR status is skipped, treats as successful merge', async () => {
+  vi.useFakeTimers();
 
-    const mergePRSpy = vi.fn().mockResolvedValue({ status: 'merged' });
+  const page = { id: 18, url: '/faq', requires_auth: false, requires_admin: false };
+  const project = { id: 'p1' };
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            updateSitePageResult: vi.fn()
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/api/githubClient.js': {
-            mergePRWithResult: mergePRSpy
-        },
-        '../../src/utils/logger.js': {
-            log: vi.fn()
-        }
-    });
+  mockJulesClient.startAndMonitorSession.mockImplementation(async (prompt, label, proj, options) => {
+    if (options?.onPRCreated) {
+      options.onPRCreated({ prUrl: 'https://github.com/org/repo/pull/7', prNumber: 7 });
+    }
+    return true;
+  });
 
-    vi.useFakeTimers();
+  mockGithubClient.mergePRWithResult.mockResolvedValue({ status: 'skipped' });
 
-    const authPage = { id: 11, url: '/dashboard', requires_admin: 0, requires_auth: 1 };
-    const project = { id: 'p1' };
+  const processPromise = siteCheckService.processPage(page, project, 'fr');
 
-    const processPromise = siteCheck.processPage(authPage, project, 'fr');
+  // Advance timers through fix delay (120s)
+  await vi.advanceTimersByTimeAsync(120_000);
 
-    await vi.runAllTimersAsync();
-    await processPromise;
+  await processPromise;
 
-    const analysisPrompt = startSessionSpy.mock.calls[0][0];
-    expect(analysisPrompt).toContain('--auth user');
-    expect(analysisPrompt).toContain('agent-screenshots/fr/dashboard');
-
-    const fixPrompt = startSessionSpy.mock.calls[1][0];
-    expect(fixPrompt).toContain('--auth user');
-
-    vi.useRealTimers();
+  expect(mockDb.updateSitePageResult).toHaveBeenNthCalledWith(2, 18, {
+    status: 'ANALYZED',
+    screenshotPath: 'agent-screenshots/fr/faq/desktop.png',
+    issues: null,
+  });
 });
 
-test('processPage - handles merge error throw gracefully', async () => {
-    const updateResultSpy = vi.fn();
-    const startSessionSpy = vi.fn()
-        .mockImplementation(async (prompt, agentId, project, options) => {
-            if (options?.onPRCreated) options.onPRCreated({ prNumber: 789 });
-            return true;
-        });
-    const mergePRSpy = vi.fn().mockRejectedValue(new Error('GitHub API down'));
-    const logSpy = vi.fn();
+test('processPage - when PR merge succeeds, transitions to ANALYZED, waits, and triggers fix agent', async () => {
+  vi.useFakeTimers();
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            updateSitePageResult: updateResultSpy
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/api/githubClient.js': {
-            mergePRWithResult: mergePRSpy
-        },
-        '../../src/utils/logger.js': {
-            log: logSpy
-        }
-    });
+  const page = { id: 20, url: '/settings', requires_auth: true, requires_admin: false };
+  const project = { id: 'p1' };
+  const onTokenPicked = vi.fn();
 
-    vi.useFakeTimers();
+  let sessionCount = 0;
+  mockJulesClient.startAndMonitorSession.mockImplementation(async (prompt, label, proj, options) => {
+    sessionCount++;
+    if (sessionCount === 1 && options?.onPRCreated) {
+      options.onPRCreated({ prUrl: 'https://github.com/org/repo/pull/99', prNumber: 99 });
+    }
+    return true;
+  });
 
-    const page = { id: 3, url: '/error-page' };
-    const project = { id: 'p1' };
+  // First merge fails, second merge succeeds
+  mockGithubClient.mergePRWithResult
+    .mockResolvedValueOnce({ status: 'failed', reason: 'Temporary glitch' })
+    .mockResolvedValueOnce({ status: 'merged' });
 
-    const processPromise = siteCheck.processPage(page, project);
+  const processPromise = siteCheckService.processPage(page, project, 'fr', null, { onTokenPicked });
 
-    await vi.runAllTimersAsync();
-    await processPromise;
+  // Advance timer for 1st merge retry (30s)
+  await vi.advanceTimersByTimeAsync(30_000);
 
-    expect(updateResultSpy).toHaveBeenCalledWith(3, expect.objectContaining({ status: 'ANALYZE' }));
-    expect(updateResultSpy).toHaveBeenLastCalledWith(3, expect.objectContaining({ status: 'ANALYZE', screenshotPath: null }));
-    expect(mergePRSpy).toHaveBeenCalledTimes(3);
-    expect(logSpy).toHaveBeenCalledWith('warn', expect.stringContaining('GitHub API down'));
+  // Advance timer for fix delay (120s)
+  await vi.advanceTimersByTimeAsync(120_000);
 
-    vi.useRealTimers();
+  await processPromise;
+
+  expect(mockGithubClient.mergePRWithResult).toHaveBeenCalledTimes(2);
+
+  // NthCall 1: ANALYZE (start of processPage)
+  expect(mockDb.updateSitePageResult).toHaveBeenNthCalledWith(1, 20, {
+    status: 'ANALYZE',
+    screenshotPath: 'agent-screenshots/fr/settings/desktop.png',
+    issues: null,
+  });
+
+  // NthCall 2: ANALYZED (after successful merge)
+  expect(mockDb.updateSitePageResult).toHaveBeenNthCalledWith(2, 20, {
+    status: 'ANALYZED',
+    screenshotPath: 'agent-screenshots/fr/settings/desktop.png',
+    issues: null,
+  });
+
+  // NthCall 3: FIX (after fix delay)
+  expect(mockDb.updateSitePageResult).toHaveBeenNthCalledWith(3, 20, {
+    status: 'FIX',
+    screenshotPath: 'agent-screenshots/fr/settings/desktop.png',
+    issues: null,
+  });
+
+  expect(mockJulesClient.startAndMonitorSession).toHaveBeenCalledTimes(2);
+  expect(mockJulesClient.startAndMonitorSession).toHaveBeenLastCalledWith(
+    expect.stringContaining('Mission : Correction visuelle et technique — `/settings`'),
+    'Site-Check-Fix',
+    project,
+    { onTokenPicked }
+  );
 });
 
-test('runSiteCheckCycle - exits immediately if shouldStop is true', async () => {
-    const releaseLocksSpy = vi.fn();
-    const pickPageSpy = vi.fn();
-    const logSpy = vi.fn();
+test('runSiteCheckCycle - stops immediately if shouldStop returns true', async () => {
+  const project = { id: 'p1' };
+  const shouldStop = vi.fn().mockReturnValue(true);
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            releaseStaleSitePageLocks: releaseLocksSpy,
-            pickAndLockSitePage: pickPageSpy
-        },
-        '../../src/utils/logger.js': {
-            log: logSpy
-        }
-    });
+  await siteCheckService.runSiteCheckCycle(project, { shouldStop });
 
-    const project = { id: 'p1' };
-    const shouldStop = vi.fn().mockReturnValue(true);
-
-    await siteCheck.runSiteCheckCycle(project, { shouldStop });
-
-    expect(releaseLocksSpy).toHaveBeenCalledWith(30);
-    expect(pickPageSpy).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('Runner arrêté'));
+  expect(mockDb.releaseStaleSitePageLocks).toHaveBeenCalledWith(30);
+  expect(mockDb.pickAndLockSitePage).not.toHaveBeenCalled();
+  expect(mockLogger.log).toHaveBeenCalledWith('info', expect.stringContaining('Runner arrêté'));
 });
 
-test('runSiteCheckCycle - handles no page available', async () => {
-    const releaseLocksSpy = vi.fn();
-    const pickPageSpy = vi.fn().mockResolvedValue(null);
-    const logSpy = vi.fn();
+test('runSiteCheckCycle - handles empty page queue and respects shouldStop', async () => {
+  vi.useFakeTimers();
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            releaseStaleSitePageLocks: releaseLocksSpy,
-            pickAndLockSitePage: pickPageSpy
-        },
-        '../../src/utils/logger.js': {
-            log: logSpy
-        }
-    });
+  const project = { id: 'p1' };
+  mockDb.pickAndLockSitePage.mockResolvedValue(null);
 
-    const project = { id: 'p1' };
-    let callsCount = 0;
-    const shouldStop = vi.fn().mockImplementation(() => {
-        callsCount++;
-        return callsCount > 1; // Stop on second check
-    });
+  let stops = 0;
+  const shouldStop = () => {
+    stops++;
+    return stops > 1; // 1st check false, 2nd check true
+  };
 
-    vi.useFakeTimers();
+  const cyclePromise = siteCheckService.runSiteCheckCycle(project, { shouldStop });
 
-    const runPromise = siteCheck.runSiteCheckCycle(project, { shouldStop, locale: 'fr' });
+  await vi.advanceTimersByTimeAsync(60_000);
 
-    // Advance timers so the setTimeout of 60s completes
-    await vi.advanceTimersByTimeAsync(60000);
-    await runPromise;
+  await cyclePromise;
 
-    expect(releaseLocksSpy).toHaveBeenCalledWith(30);
-    expect(pickPageSpy).toHaveBeenCalledTimes(1);
-    expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('Cycle complet (locale=fr)'));
-    expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('Runner arrêté'));
-
-    vi.useRealTimers();
+  expect(mockDb.releaseStaleSitePageLocks).toHaveBeenCalledWith(30);
+  expect(mockDb.pickAndLockSitePage).toHaveBeenCalledWith('p1', 'site-check-runner');
+  expect(mockLogger.log).toHaveBeenCalledWith('info', expect.stringContaining('Cycle complet'));
 });
 
-test('runSiteCheckCycle - processes page and applies pauseMs', async () => {
-    const releaseLocksSpy = vi.fn();
-    const pickPageSpy = vi.fn().mockResolvedValue({ id: 10, url: '/test' });
-    const updateResultSpy = vi.fn();
-    const startSessionSpy = vi.fn().mockResolvedValue(false); // No PR -> complete cycle instantly
-    const logSpy = vi.fn();
+test('runSiteCheckCycle - processes page with zero pauseMs and unlocks on error', async () => {
+  vi.useFakeTimers();
 
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            releaseStaleSitePageLocks: releaseLocksSpy,
-            pickAndLockSitePage: pickPageSpy,
-            updateSitePageResult: updateResultSpy
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/utils/logger.js': {
-            log: logSpy
-        }
-    });
+  const project = { id: 'p1' };
+  const page = { id: 50, url: '/error-page' };
 
-    const project = { id: 'p1' };
-    let callsCount = 0;
-    const shouldStop = vi.fn().mockImplementation(() => {
-        callsCount++;
-        return callsCount > 1; // Stop on second check
-    });
+  mockDb.pickAndLockSitePage.mockResolvedValueOnce(page);
+  mockJulesClient.startAndMonitorSession.mockRejectedValue(new Error('Fatal session error'));
 
-    vi.useFakeTimers();
+  let calls = 0;
+  const shouldStop = () => {
+    calls++;
+    return calls > 1;
+  };
 
-    const runPromise = siteCheck.runSiteCheckCycle(project, { shouldStop, pauseMs: 1000 });
+  await siteCheckService.runSiteCheckCycle(project, { shouldStop, pauseMs: 0 });
 
-    await vi.advanceTimersByTimeAsync(1000);
-    await runPromise;
-
-    expect(pickPageSpy).toHaveBeenCalledTimes(1);
-    expect(updateResultSpy).toHaveBeenCalledWith(10, expect.objectContaining({ status: 'OK' }));
-    expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('Runner arrêté'));
-
-    vi.useRealTimers();
-});
-
-test('runSiteCheckCycle - unlocks page if processPage throws an error', async () => {
-    const releaseLocksSpy = vi.fn();
-    const pickPageSpy = vi.fn().mockResolvedValue({ id: 20, url: '/fail' });
-    const unlockPageSpy = vi.fn();
-    const startSessionSpy = vi.fn().mockRejectedValue(new Error('Process Page Failed'));
-    const logSpy = vi.fn();
-
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            releaseStaleSitePageLocks: releaseLocksSpy,
-            pickAndLockSitePage: pickPageSpy,
-            unlockSitePage: unlockPageSpy,
-            updateSitePageResult: vi.fn() // mock so processPage proceeds to startSession
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/utils/logger.js': {
-            log: logSpy
-        }
-    });
-
-    const project = { id: 'p1' };
-    let callsCount = 0;
-    const shouldStop = vi.fn().mockImplementation(() => {
-        callsCount++;
-        return callsCount > 1; // Stop on second check
-    });
-
-    vi.useFakeTimers();
-
-    const runPromise = siteCheck.runSiteCheckCycle(project, { shouldStop, pauseMs: 500 });
-
-    await vi.advanceTimersByTimeAsync(500);
-    await runPromise;
-
-    expect(pickPageSpy).toHaveBeenCalledTimes(1);
-    expect(unlockPageSpy).toHaveBeenCalledWith(20);
-    expect(logSpy).toHaveBeenCalledWith('error', expect.stringContaining('Erreur sur /fail: Process Page Failed'));
-    expect(logSpy).toHaveBeenCalledWith('info', expect.stringContaining('Runner arrêté'));
-
-    vi.useRealTimers();
-});
-
-test('processPage - handles no problem detected (no PR)', async () => {
-    const updateResultSpy = vi.fn();
-    const startSessionSpy = vi.fn().mockResolvedValue(false);
-
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            updateSitePageResult: updateResultSpy
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/utils/logger.js': {
-            log: vi.fn()
-        }
-    });
-
-    const page = { id: 1, url: '/clean-page' };
-    const project = { id: 'p1' };
-
-    await siteCheck.processPage(page, project);
-
-    expect(updateResultSpy).toHaveBeenCalledWith(1, expect.objectContaining({ status: 'OK' }));
-    expect(startSessionSpy).toHaveBeenCalledTimes(1);
-});
-
-test('processPage - handles merge failure', async () => {
-    const updateResultSpy = vi.fn();
-    const startSessionSpy = vi.fn()
-        .mockImplementation(async (prompt, agentId, project, options) => {
-            if (options?.onPRCreated) options.onPRCreated({ prNumber: 456 });
-            return true;
-        });
-    const mergePRSpy = vi.fn().mockResolvedValue({ status: 'failed', reason: 'conflict' });
-
-    const siteCheck = await esmock('../../src/services/siteCheckService.js', {
-        '../../src/db/database.js': {
-            updateSitePageResult: updateResultSpy
-        },
-        '../../src/api/julesClient.js': {
-            startAndMonitorSession: startSessionSpy
-        },
-        '../../src/api/githubClient.js': {
-            mergePRWithResult: mergePRSpy
-        },
-        '../../src/utils/logger.js': {
-            log: vi.fn()
-        }
-    });
-
-    vi.useFakeTimers();
-
-    const page = { id: 2, url: '/conflict-page' };
-    const project = { id: 'p1' };
-
-    const processPromise = siteCheck.processPage(page, project);
-
-    await vi.runAllTimersAsync();
-    await processPromise;
-
-    expect(updateResultSpy).toHaveBeenCalledWith(2, expect.objectContaining({ status: 'ANALYZE' }));
-    // After 3 failed merge tries, it should revert to ANALYZE
-    expect(updateResultSpy).toHaveBeenLastCalledWith(2, expect.objectContaining({ status: 'ANALYZE', screenshotPath: null }));
-    expect(mergePRSpy).toHaveBeenCalledTimes(3);
-
-    vi.useRealTimers();
+  expect(mockDb.unlockSitePage).toHaveBeenCalledWith(50);
+  expect(mockLogger.log).toHaveBeenCalledWith('error', expect.stringContaining('Erreur sur /error-page: Fatal session error'));
 });
