@@ -553,6 +553,51 @@ describe('githubClient API Service', () => {
       expect(res).toEqual({ status: 'merged' });
     });
 
+    it('should handle squash method failing with non-405 status after merge returns 405 and truncate long error detail', async () => {
+      const longError = 'A'.repeat(150);
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ merged: false, state: 'open', draft: false, mergeable: true })
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 405
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          text: async () => longError
+        });
+
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = await mergePRWithResult(dummyProject, 10);
+      expect(res).toEqual({ status: 'failed', reason: `409: ${'A'.repeat(120)}` });
+    });
+
+    it('should handle text reading exception on non-405 squash failure after merge returns 405', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ merged: false, state: 'open', draft: false, mergeable: true })
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 405
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: async () => { throw new Error('Text stream closed'); }
+        });
+
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = await mergePRWithResult(dummyProject, 10);
+      expect(res).toEqual({ status: 'failed', reason: '500: ' });
+    });
+
     it('should return "Merge method not allowed" if both merge methods return 405', async () => {
       const fetchMock = vi.fn()
         .mockResolvedValueOnce({
