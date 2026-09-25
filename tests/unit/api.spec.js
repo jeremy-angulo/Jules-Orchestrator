@@ -290,3 +290,70 @@ test('api.js - handles generic error in listActivities', async () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Generic Activity Error');
 });
+
+test('api.js - handles non-Error string exceptions in session retrieval', async () => {
+    const targetPath = resolve(__dirname, '../../src/routes/api.js');
+
+    const apiRouter = await esmock(targetPath, {
+        [resolve(__dirname, '../../src/api/julesClient.js')]: {
+            getSession: vi.fn(async () => {
+                throw 'Raw string failure';
+            }),
+            listActivities: vi.fn(async () => {
+                return { activities: [] };
+            }),
+        },
+        [resolve(__dirname, '../../src/api/githubClient.js')]: {
+            mergeOpenPRs: vi.fn(),
+            closePR: vi.fn(),
+            mergePRWithResult: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/services/githubService.js')]: {
+            getCachedPRs: vi.fn(),
+            invalidatePRCache: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/db/database.js')]: {
+            listAgentSessions: vi.fn(),
+            upsertProjectConfig: vi.fn(),
+            getProjectConfig: vi.fn(),
+            deleteProjectConfig: vi.fn(),
+            deleteAssignmentsByProject: vi.fn(),
+            listAssignments: vi.fn(),
+            toggleAssignment: vi.fn(),
+            createAssignment: vi.fn(),
+            deleteAssignment: vi.fn(),
+            listAgents: vi.fn(),
+            getAgent: vi.fn(),
+            createAgent: vi.fn(),
+            updateAgent: vi.fn(),
+            deleteAgent: vi.fn(),
+            reorderAgents: vi.fn(),
+            listAuditEvents: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/api/tokenRotation.js')]: {
+            getTokenStatusSummary: vi.fn(),
+        },
+        [resolve(__dirname, '../../src/middleware/securityMiddleware.js')]: {
+            apiRateLimiter: (req, res, next) => next(),
+        },
+        [resolve(__dirname, '../../src/middleware/authMiddleware.js')]: {
+            requirePermission: () => (req, res, next) => next(),
+            requireCriticalConfirmation: (req, res, next) => next(),
+            audit: async () => {},
+        },
+        [resolve(__dirname, '../../src/routes/projectRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/agentRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/assignmentRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/systemRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/julesRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/userRoutes.js')]: express.Router(),
+        [resolve(__dirname, '../../src/routes/siteCheckRoutes.js')]: express.Router(),
+    });
+
+    const app = express();
+    app.use('/api', apiRouter);
+
+    const res = await request(app).get('/api/sessions/test-session');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Raw string failure');
+});
