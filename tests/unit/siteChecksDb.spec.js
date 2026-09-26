@@ -209,3 +209,103 @@ test('releaseStaleSitePageLocks - clears cache', async () => {
     expect(siteCheckStatsCacheMock.clear).toHaveBeenCalled();
     expect(siteCheckPagesCacheMock.clear).toHaveBeenCalled();
 });
+
+test('getSiteCheckConfig - applies default fallback values when row contains null or falsy fields', async () => {
+    executeWithRetryMock.mockResolvedValue({
+        rows: [{
+            site_check_enabled: 0,
+            site_check_base_url: null,
+            site_check_pause_ms: null,
+            site_check_locale: null,
+            site_check_concurrency: null
+        }]
+    });
+
+    const config = await siteChecks.getSiteCheckConfig('p1');
+    expect(config).toEqual({
+        enabled: false,
+        baseUrl: '',
+        pauseMs: 5000,
+        locale: 'fr',
+        concurrency: 1
+    });
+});
+
+test('updateSiteCheckConfig - falls back to default options when parameters are missing or null', async () => {
+    await siteChecks.updateSiteCheckConfig('p2', {});
+
+    expect(executeWithRetryMock).toHaveBeenCalledWith(expect.objectContaining({
+        sql: expect.stringContaining('UPDATE projects_config'),
+        args: [0, null, 5000, 'fr', 1, expect.any(Number), 'p2']
+    }));
+});
+
+test('pickAndLockSitePage - handles row with null issues property', async () => {
+    executeWithRetryMock.mockResolvedValue({
+        rows: [{
+            id: 2,
+            project_id: 'p1',
+            issues: null
+        }]
+    });
+
+    const page = await siteChecks.pickAndLockSitePage('p1', 'agent2');
+    expect(page).toEqual({
+        id: 2,
+        project_id: 'p1',
+        issues: null
+    });
+});
+
+test('updateSitePageResult - handles missing optional screenshotPath and issues', async () => {
+    executeWithRetryMock.mockResolvedValue({ rows: [{ project_id: 'p1' }] });
+    await siteChecks.updateSitePageResult(10, { status: 'ANALYZE' });
+
+    expect(executeWithRetryMock).toHaveBeenCalledWith(expect.objectContaining({
+        args: [
+            'ANALYZE',
+            null,
+            null,
+            expect.any(String),
+            expect.any(String),
+            10
+        ]
+    }));
+});
+
+test('getSiteCheckStats - handles empty DB row with zero defaults', async () => {
+    siteCheckStatsCacheMock.get.mockReturnValue(null);
+    executeWithRetryMock.mockResolvedValue({ rows: [undefined] });
+
+    const stats = await siteChecks.getSiteCheckStats('p1');
+    expect(stats).toEqual({
+        total: 0,
+        ok: 0,
+        fix: 0,
+        analyze: 0,
+        neverAnalyzed: 0
+    });
+});
+
+test('listSitePages - filters by group_name and uses default options', async () => {
+    const mockPages = [
+        { id: 1, status: 'OK', group_name: 'admin', issues: null },
+        { id: 2, status: 'OK', group_name: 'user', issues: null }
+    ];
+    siteCheckPagesCacheMock.get.mockReturnValue(mockPages);
+
+    const pages = await siteChecks.listSitePages('p1', { group: 'admin' });
+    expect(pages).toHaveLength(1);
+    expect(pages[0].id).toBe(1);
+
+    // Call without second argument to verify default options parameter
+    const allPages = await siteChecks.listSitePages('p1');
+    expect(allPages).toHaveLength(2);
+});
+
+test('releaseStaleSitePageLocks - uses default maxAgeMinutes of 30 when omitted', async () => {
+    await siteChecks.releaseStaleSitePageLocks();
+    expect(executeWithRetryMock).toHaveBeenCalledWith(expect.objectContaining({
+        args: ['-30']
+    }));
+});

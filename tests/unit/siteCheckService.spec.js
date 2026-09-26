@@ -276,3 +276,35 @@ test('runSiteCheckCycle - processes page with zero pauseMs and unlocks on error'
   expect(mockDb.unlockSitePage).toHaveBeenCalledWith(50);
   expect(mockLogger.log).toHaveBeenCalledWith('error', expect.stringContaining('Erreur sur /error-page: Fatal session error'));
 });
+
+test('runSiteCheckCycle - processes page successfully and pauses for positive pauseMs', async () => {
+  vi.useFakeTimers();
+
+  const project = { id: 'p1' };
+  const page = { id: 60, url: '/home', requires_auth: false, requires_admin: false };
+
+  mockDb.pickAndLockSitePage.mockResolvedValueOnce(page).mockResolvedValue(null);
+  mockJulesClient.startAndMonitorSession.mockResolvedValue(false);
+
+  let iterations = 0;
+  const shouldStop = () => {
+    iterations++;
+    return iterations > 2; // Stop on third check
+  };
+
+  const cyclePromise = siteCheckService.runSiteCheckCycle(project, { shouldStop, pauseMs: 5000 });
+
+  // Advance timer for pauseMs after processPage (5000ms)
+  await vi.advanceTimersByTimeAsync(5000);
+
+  // Advance timer for empty queue pause (60,000ms)
+  await vi.advanceTimersByTimeAsync(60000);
+
+  await cyclePromise;
+
+  expect(mockDb.updateSitePageResult).toHaveBeenCalledWith(60, {
+    status: 'OK',
+    screenshotPath: 'agent-screenshots/fr/home/desktop.png',
+    issues: null,
+  });
+});
