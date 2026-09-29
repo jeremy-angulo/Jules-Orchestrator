@@ -131,6 +131,14 @@ describe('githubClient Coverage Expansion', () => {
       expect(res.status).toBe('failed');
       expect(res.reason).toBe('500: ');
     });
+
+    it('should handle non-Error exception string during mergePRWithResult', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue('Fatal network crash string'));
+
+      const res = await mergePRWithResult(mockProject, 99);
+      expect(res.status).toBe('failed');
+      expect(res.reason).toBeUndefined();
+    });
   });
 
   describe('mergeOpenPRs parallel processing', () => {
