@@ -308,3 +308,40 @@ test('runSiteCheckCycle - processes page successfully and pauses for positive pa
     issues: null,
   });
 });
+
+test('processPage - handles null result or exception without message in mergeWithRetry', async () => {
+  vi.useFakeTimers();
+
+  const page = { id: 70, url: '/pricing', requires_auth: false, requires_admin: false };
+  const project = { id: 'p1' };
+
+  mockJulesClient.startAndMonitorSession.mockImplementation(async (prompt, label, proj, options) => {
+    if (options?.onPRCreated) {
+      options.onPRCreated({ prUrl: 'https://github.com/org/repo/pull/12', prNumber: 12 });
+    }
+    return true;
+  });
+
+  // 1st retry: null result from mergePRWithResult
+  // 2nd retry: thrown string exception
+  // 3rd retry: rejected with object without message
+  mockGithubClient.mergePRWithResult
+    .mockResolvedValueOnce(null)
+    .mockRejectedValueOnce('Raw string error')
+    .mockRejectedValueOnce({});
+
+  const processPromise = siteCheckService.processPage(page, project, 'fr');
+
+  await vi.advanceTimersByTimeAsync(30_000);
+  await vi.advanceTimersByTimeAsync(30_000);
+  await vi.advanceTimersByTimeAsync(30_000);
+
+  await processPromise;
+
+  expect(mockLogger.log).toHaveBeenCalledWith('error', '[SiteCheck] PR #12 impossible à merger après 3 tentatives');
+  expect(mockDb.updateSitePageResult).toHaveBeenLastCalledWith(70, {
+    status: 'ANALYZE',
+    screenshotPath: null,
+    issues: null,
+  });
+});
