@@ -317,4 +317,26 @@ describe('healthMonitor service', () => {
 
     expect(fetchSpy).toHaveBeenCalledWith('https://public-base.com/health', expect.anything());
   });
+
+  it('should handle probe fetch error with empty message', async () => {
+    const serviceId = 'website';
+    const errWithoutMsg = new Error('');
+    errWithoutMsg.name = 'EmptyError';
+
+    const fetchSpy = vi.fn().mockRejectedValue(errWithoutMsg);
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const metricsStore = await import('../../src/services/metricsStore.js');
+    const recordErrorSpy = vi.spyOn(metricsStore, 'recordServiceError');
+
+    const { startWebsiteHealthMonitor } = await import('../../src/services/healthMonitor.js');
+    startWebsiteHealthMonitor({ url: 'http://test-server.local/health-empty-msg' });
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    expect(recordErrorSpy).toHaveBeenCalledWith(serviceId, 'Website check failed', expect.objectContaining({
+      code: 'EmptyError',
+      message: 'EmptyError'
+    }));
+  });
 });
