@@ -82,6 +82,111 @@ describe('githubClient Coverage Expansion', () => {
       expect(res[0].number).toBe(50);
       expect(res[0].additions).toBeNull();
     });
+
+    it('should return empty array when initial list fetch fails with non-ok response', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 404
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = await listOpenPRs(mockProject);
+      expect(res).toEqual([]);
+    });
+
+    it('should return empty array when initial list fetch throws network error', async () => {
+      const fetchMock = vi.fn().mockRejectedValueOnce(new Error('Network error'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = await listOpenPRs(mockProject);
+      expect(res).toEqual([]);
+    });
+  });
+
+  describe('closePR helper', () => {
+    it('should return true when API request succeeds', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await closePR(mockProject, 42);
+      expect(result).toBe(true);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/test-org/test-repo/pulls/42',
+        expect.objectContaining({
+          method: 'PATCH',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer ghp_coverage_token'
+          }),
+          body: JSON.stringify({ state: 'closed' })
+        })
+      );
+    });
+
+    it('should return false when API returns error status', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 403
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await closePR(mockProject, 42);
+      expect(result).toBe(false);
+    });
+
+    it('should return false when network exception occurs', async () => {
+      const fetchMock = vi.fn().mockRejectedValueOnce(new Error('Connection lost'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const result = await closePR(mockProject, 42);
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('getPRFiles helper', () => {
+    it('should return list of modified files when request succeeds', async () => {
+      const mockFiles = [
+        { filename: 'src/index.js', status: 'modified' },
+        { filename: 'README.md', status: 'added' }
+      ];
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        json: async () => mockFiles
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const files = await getPRFiles(mockProject, 15);
+      expect(files).toEqual(mockFiles);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/test-org/test-repo/pulls/15/files?per_page=100',
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            Authorization: 'Bearer ghp_coverage_token'
+          })
+        })
+      );
+    });
+
+    it('should return empty array when API response is not ok', async () => {
+      const fetchMock = vi.fn().mockResolvedValueOnce({
+        ok: false,
+        status: 500
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const files = await getPRFiles(mockProject, 15);
+      expect(files).toEqual([]);
+    });
+
+    it('should return empty array when fetch throws network error', async () => {
+      const fetchMock = vi.fn().mockRejectedValueOnce(new Error('Network error'));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const files = await getPRFiles(mockProject, 15);
+      expect(files).toEqual([]);
+    });
   });
 
   describe('mergePRWithResult fallback and error handling', () => {
