@@ -47,7 +47,7 @@ describe('dashboardAuth', () => {
   });
 
   describe('createDashboardUser', () => {
-    it('should create a dashboard user successfully', async () => {
+    it('should create a dashboard user successfully with explicit and default role', async () => {
       const mockUser = { id: 1, email: 'new@example.com', role: 'viewer' };
       vi.mocked(db.findUserByEmail).mockResolvedValueOnce(null).mockResolvedValueOnce(mockUser);
       vi.mocked(db.createDashboardUser).mockResolvedValue(true);
@@ -59,10 +59,17 @@ describe('dashboardAuth', () => {
         expect.stringContaining('scrypt$'),
         'viewer'
       );
+
+      // Default role fallback test
+      vi.mocked(db.findUserByEmail).mockResolvedValueOnce(null).mockResolvedValueOnce(mockUser);
+      const userDefaultRole = await createDashboardUser('new@example.com', 'password123');
+      expect(userDefaultRole).toEqual(mockUser);
     });
 
     it('should throw an error for invalid email format', async () => {
       await expect(createDashboardUser('invalid-email', 'password123', 'viewer'))
+        .rejects.toThrow('Invalid email.');
+      await expect(createDashboardUser('', 'password123', 'viewer'))
         .rejects.toThrow('Invalid email.');
       await expect(createDashboardUser(null, 'password123', 'viewer'))
         .rejects.toThrow('Invalid email.');
@@ -116,6 +123,13 @@ describe('dashboardAuth', () => {
 
       const user = await authenticateDashboardUser('test@example.com', 'password');
       expect(user).toBeNull();
+
+      vi.mocked(db.findUserByEmail).mockResolvedValue({
+        email: 'test@example.com',
+        password_hash: 'scrypt$salt'
+      });
+      const user2 = await authenticateDashboardUser('test@example.com', 'password');
+      expect(user2).toBeNull();
     });
 
     it('should return null if password hash is missing parts', async () => {
@@ -162,6 +176,28 @@ describe('dashboardAuth', () => {
 
       expect(token).toBeDefined();
       expect(typeof token).toBe('string');
+      expect(expiresAt).toBeGreaterThan(Date.now());
+      expect(db.createDashboardSession).toHaveBeenCalledWith(
+        123,
+        expect.any(String),
+        expiresAt
+      );
+
+      // Invalid TTL string
+      const resInvalid = await createDashboardSession(123, 'invalid-ttl');
+      expect(resInvalid.expiresAt).toBeGreaterThan(Date.now());
+
+      // TTL less than minimum 60_000 ms
+      const before = Date.now();
+      const resShort = await createDashboardSession(123, 1000);
+      expect(resShort.expiresAt).toBeGreaterThanOrEqual(before + 60_000);
+    });
+
+    it('should use default SESSION_TTL_MS if ttlMs parameter is omitted or invalid', async () => {
+      vi.mocked(db.createDashboardSession).mockResolvedValue(true);
+      const { token, expiresAt } = await createDashboardSession(123);
+
+      expect(token).toBeDefined();
       expect(expiresAt).toBeGreaterThan(Date.now());
       expect(db.createDashboardSession).toHaveBeenCalledWith(
         123,
@@ -272,6 +308,10 @@ describe('dashboardAuth', () => {
 
     it('should throw an error for short password', async () => {
       await expect(updateDashboardUserPassword(123, '12'))
+        .rejects.toThrow('Password must be at least 3 characters long.');
+      await expect(updateDashboardUserPassword(123, null))
+        .rejects.toThrow('Password must be at least 3 characters long.');
+      await expect(updateDashboardUserPassword(123, undefined))
         .rejects.toThrow('Password must be at least 3 characters long.');
     });
   });
