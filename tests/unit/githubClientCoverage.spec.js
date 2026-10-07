@@ -242,7 +242,7 @@ describe('githubClient Coverage Expansion', () => {
 
       const res = await mergePRWithResult(mockProject, 99);
       expect(res.status).toBe('failed');
-      expect(res.reason).toBeUndefined();
+      expect(res.reason).toBe('Fatal network crash string');
     });
   });
 
