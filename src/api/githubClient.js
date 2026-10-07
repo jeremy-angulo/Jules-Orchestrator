@@ -253,7 +253,7 @@ export async function mergePRWithResult(project, prNumber) {
     }
     return { status: 'failed', reason: 'Merge method not allowed' };
   } catch (e) {
-    return { status: 'failed', reason: e.message };
+    return { status: 'failed', reason: String(e?.message || e) };
   }
 }
 
