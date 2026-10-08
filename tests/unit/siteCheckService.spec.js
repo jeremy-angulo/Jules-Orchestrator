@@ -71,6 +71,56 @@ test('processPage - when no PR is created, marks page status as OK', async () =>
   });
 });
 
+test('processPage - uses default locale fr when locale argument is omitted', async () => {
+  const page = { id: 80, url: '/contact', requires_auth: false, requires_admin: false };
+  const project = { id: 'p1' };
+
+  mockJulesClient.startAndMonitorSession.mockResolvedValue(false);
+
+  await siteCheckService.processPage(page, project);
+
+  expect(mockDb.updateSitePageResult).toHaveBeenCalledWith(80, {
+    status: 'ANALYZE',
+    screenshotPath: 'agent-screenshots/fr/contact/desktop.png',
+    issues: null,
+  });
+});
+
+test('runSiteCheckCycle - passes custom runnerId and locale options to pickAndLockSitePage and processPage', async () => {
+  vi.useFakeTimers();
+
+  const project = { id: 'p2' };
+  const page = { id: 90, url: '/dashboard', requires_auth: false, requires_admin: false };
+
+  mockDb.pickAndLockSitePage.mockResolvedValueOnce(page).mockResolvedValue(null);
+  mockJulesClient.startAndMonitorSession.mockResolvedValue(false);
+
+  let runs = 0;
+  const shouldStop = () => {
+    runs++;
+    return runs > 2;
+  };
+
+  const cyclePromise = siteCheckService.runSiteCheckCycle(project, {
+    runnerId: 'custom-runner-99',
+    locale: 'de',
+    pauseMs: 1000,
+    shouldStop,
+  });
+
+  await vi.advanceTimersByTimeAsync(1000);
+  await vi.advanceTimersByTimeAsync(60000);
+
+  await cyclePromise;
+
+  expect(mockDb.pickAndLockSitePage).toHaveBeenCalledWith('p2', 'custom-runner-99');
+  expect(mockDb.updateSitePageResult).toHaveBeenCalledWith(90, {
+    status: 'OK',
+    screenshotPath: 'agent-screenshots/de/dashboard/desktop.png',
+    issues: null,
+  });
+});
+
 test('processPage - prompts correctly handle root URL, requires_admin, requires_auth, and none', async () => {
   const pageAdmin = { id: 11, url: '/', requires_admin: true, requires_auth: false };
   const pageAuth = { id: 12, url: '/profile', requires_admin: false, requires_auth: true };
