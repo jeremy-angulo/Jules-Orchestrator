@@ -475,6 +475,66 @@ describe('ControlCenter', () => {
       expect(controlCenter.runners.has('site-check:p1:0')).toBe(true);
       expect(controlCenter.runners.has('site-check:p2:0')).toBe(false);
     });
+
+    it('startAllSiteChecks should catch error and log warning if startSiteCheck fails for a project', async () => {
+      mockDatabase.listProjectsConfig.mockResolvedValue([
+        { id: 'p_err', site_check_enabled: 1 }
+      ]);
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 1 });
+      mockDatabase.getProjectConfig.mockResolvedValue(null); // Project not found triggers error in startSiteCheck
+
+      const logSpy = vi.spyOn(controlCenter, 'log');
+
+      await controlCenter.startAllSiteChecks();
+
+      expect(logSpy).toHaveBeenCalledWith(
+        'warn',
+        expect.stringContaining('[SiteCheck] Could not auto-start for p_err')
+      );
+    });
+
+    it('startSiteCheck should reuse existing runners when already registered', async () => {
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 1, concurrency: 2, pauseMs: 1000, locale: 'en' });
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      // Pre-create runner 0
+      controlCenter._createRunner({
+        id: 'site-check:p1:0',
+        projectId: 'p1',
+        type: 'site-check',
+        mode: 'loop'
+      });
+
+      const runnerIds = await controlCenter.startSiteCheck('p1');
+      expect(runnerIds).toEqual(['site-check:p1:0', 'site-check:p1:1']);
+      // runSiteCheckCycle should only be called for the new runner (index 1)
+      expect(mockSiteCheckService.runSiteCheckCycle).toHaveBeenCalledTimes(1);
+    });
+
+    it('startSiteCheck should handle runSiteCheckCycle crash and mark runner as failed', async () => {
+      mockDatabase.getSiteCheckConfig.mockResolvedValue({ enabled: 1, concurrency: 1, pauseMs: 1000, locale: 'fr' });
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      let rejectPromise;
+      mockSiteCheckService.runSiteCheckCycle.mockImplementationOnce(() => new Promise((_, reject) => {
+        rejectPromise = reject;
+      }));
+
+      const runnerIds = await controlCenter.startSiteCheck('p1');
+      const runner = controlCenter.runners.get(runnerIds[0]);
+      expect(runner).toBeDefined();
+
+      const markStoppedSpy = vi.spyOn(controlCenter, '_markRunnerStopped');
+
+      rejectPromise(new Error('Site check crashed'));
+      await runner.promise;
+
+      expect(markStoppedSpy).toHaveBeenCalledWith(runner, 'failed', expect.objectContaining({ message: 'Site check crashed' }));
+    });
   });
 
   describe('Assignment Execution', () => {
@@ -621,6 +681,124 @@ describe('ControlCenter', () => {
 
       expect(resumeRunner.status).toBe('completed');
       expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-inflight', 'completed');
+    });
+
+    it('_resumeSessionForAssignment should return early if project runtime is not found or runner already exists', async () => {
+      const assignment = { id: 501, project_id: 'nonexistent' };
+      const sessionRecord = { session_id: 's1' };
+
+      // Case 1: Project not found
+      await controlCenter._resumeSessionForAssignment(assignment, sessionRecord, { name: 'Agent' });
+      expect(controlCenter.runners.has('assignment:501:resume')).toBe(false);
+
+      // Case 2: Runner already exists
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      controlCenter.projectById.set('p1', mockProject);
+      assignment.project_id = 'p1';
+
+      controlCenter._createRunner({
+        id: 'assignment:501:resume',
+        projectId: 'p1',
+        type: 'assignment-loop',
+        mode: 'loop'
+      });
+
+      await controlCenter._resumeSessionForAssignment(assignment, sessionRecord, { name: 'Agent' });
+      expect(mockJules.monitorExistingSession).not.toHaveBeenCalled();
+    });
+
+    it('_resumeSessionForAssignment should handle monitorExistingSession error and mark runner as failed', async () => {
+      const assignment = { id: 601, project_id: 'p1' };
+      const sessionRecord = { session_id: 'session-fail' };
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+
+      controlCenter.projectById.set('p1', mockProject);
+      mockJules.monitorExistingSession.mockRejectedValueOnce(new Error('Monitor error'));
+
+      const markStoppedSpy = vi.spyOn(controlCenter, '_markRunnerStopped');
+
+      await controlCenter._resumeSessionForAssignment(assignment, sessionRecord, { name: 'Agent' });
+      const runner = controlCenter.runners.get('assignment:601:resume');
+
+      await runner.promise;
+
+      expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-fail', 'failed');
+      expect(markStoppedSpy).toHaveBeenCalledWith(runner, 'failed', expect.objectContaining({ message: 'Monitor error' }));
+    });
+
+    it('startAllAssignments should transition session to completed if Jules state is COMPLETED', async () => {
+      const mockAssignments = [
+        { id: 701, enabled: 1, project_id: 'p1', agent_id: 2 }
+      ];
+      mockDatabase.listAssignments.mockResolvedValue(mockAssignments);
+      mockDatabase.getLastAgentSession.mockResolvedValue({
+        session_id: 'session-completed',
+        status: 'running'
+      });
+
+      const mockAgent = { id: 2, name: 'Agent 2' };
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      mockDatabase.getAgent.mockResolvedValue(mockAgent);
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      mockJules.getSession.mockResolvedValue({ state: 'COMPLETED' });
+      mockDatabase.getAssignment.mockResolvedValue({ ...mockAssignments[0], mode: 'loop', loop_pause_ms: 100 });
+
+      mockJules.startAndMonitorSession.mockImplementation(async (prompt, name, project, options) => {
+        for (const r of controlCenter.runners.values()) r.shouldStop = true;
+        return true;
+      });
+
+      await controlCenter.startAllAssignments();
+
+      expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-completed', 'completed');
+    });
+
+    it('startAllAssignments should transition session to failed if Jules state is FAILED or null', async () => {
+      const mockAssignments = [
+        { id: 801, enabled: 1, project_id: 'p1', agent_id: 2 }
+      ];
+      mockDatabase.listAssignments.mockResolvedValue(mockAssignments);
+      mockDatabase.getLastAgentSession.mockResolvedValue({
+        session_id: 'session-failed',
+        status: 'running'
+      });
+
+      const mockAgent = { id: 2, name: 'Agent 2' };
+      const mockProject = { id: 'p1', github_repo: 'org/repo' };
+      mockDatabase.getAgent.mockResolvedValue(mockAgent);
+      mockDatabase.getProjectConfig.mockResolvedValue(mockProject);
+      controlCenter.projectById.set('p1', mockProject);
+
+      mockJules.getSession.mockResolvedValue({ state: 'FAILED' });
+      mockDatabase.getAssignment.mockResolvedValue({ ...mockAssignments[0], mode: 'loop', loop_pause_ms: 100 });
+
+      mockJules.startAndMonitorSession.mockImplementation(async (prompt, name, project, options) => {
+        for (const r of controlCenter.runners.values()) r.shouldStop = true;
+        return true;
+      });
+
+      await controlCenter.startAllAssignments();
+
+      expect(mockDatabase.recordAgentSessionEnd).toHaveBeenCalledWith('session-failed', 'failed');
+    });
+
+    it('startAllAssignments should log error if assignment startup throws an exception', async () => {
+      mockDatabase.listAssignments.mockResolvedValue([
+        { id: 901, enabled: 1, project_id: 'p_err' }
+      ]);
+      mockDatabase.getLastAgentSession.mockRejectedValue(new Error('DB failure during last session query'));
+
+      const logSpy = vi.spyOn(controlCenter, 'log');
+
+      await controlCenter.startAllAssignments();
+
+      expect(logSpy).toHaveBeenCalledWith(
+        'error',
+        'Failed to start assignment 901',
+        { error: 'DB failure during last session query' }
+      );
     });
   });
 
