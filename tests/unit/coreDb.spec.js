@@ -23,6 +23,41 @@ describe('core.js DB', () => {
         expect(coreDb.client).toBe(mockClient);
     });
 
+    describe('environment and client creation branches', () => {
+        it('should initialize createClient with TURSO_DATABASE_URL and TURSO_AUTH_TOKEN in non-test mode', async () => {
+            let capturedOptions = null;
+            const originalNodeEnv = process.env.NODE_ENV;
+            const originalUrl = process.env.TURSO_DATABASE_URL;
+            const originalToken = process.env.TURSO_AUTH_TOKEN;
+
+            try {
+                process.env.NODE_ENV = 'production';
+                process.env.TURSO_DATABASE_URL = 'libsql://my-turso-db.turso.io';
+                process.env.TURSO_AUTH_TOKEN = 'secret-turso-token';
+
+                await esmock('../../src/db/core.js', {
+                    '@libsql/client': {
+                        createClient: (opts) => {
+                            capturedOptions = opts;
+                            return mockClient;
+                        }
+                    }
+                });
+
+                expect(capturedOptions).toEqual({
+                    url: 'libsql://my-turso-db.turso.io',
+                    authToken: 'secret-turso-token'
+                });
+            } finally {
+                process.env.NODE_ENV = originalNodeEnv;
+                if (originalUrl !== undefined) process.env.TURSO_DATABASE_URL = originalUrl;
+                else delete process.env.TURSO_DATABASE_URL;
+                if (originalToken !== undefined) process.env.TURSO_AUTH_TOKEN = originalToken;
+                else delete process.env.TURSO_AUTH_TOKEN;
+            }
+        });
+    });
+
     describe('pruneOldData', () => {
         it('should delete old data from audit_log and agent_sessions', async () => {
             const now = 1700000000000;
@@ -71,6 +106,31 @@ describe('core.js DB', () => {
             expect(mockClient.execute).toHaveBeenCalledTimes(1);
         });
 
+        it('should normalize statement object and replace undefined args with null', async () => {
+            mockClient.execute.mockResolvedValue({ rows: [] });
+            await coreDb.executeWithRetry({
+                sql: 'INSERT INTO users (name, age, role) VALUES (?, ?, ?)',
+                args: ['Alice', undefined, undefined]
+            });
+
+            expect(mockClient.execute).toHaveBeenCalledWith({
+                sql: 'INSERT INTO users (name, age, role) VALUES (?, ?, ?)',
+                args: ['Alice', null, null]
+            });
+        });
+
+        it('should normalize statement object with empty/undefined args array', async () => {
+            mockClient.execute.mockResolvedValue({ rows: [] });
+            await coreDb.executeWithRetry({
+                sql: 'SELECT * FROM users'
+            });
+
+            expect(mockClient.execute).toHaveBeenCalledWith({
+                sql: 'SELECT * FROM users',
+                args: []
+            });
+        });
+
         it('should retry on SQLITE_BUSY and eventually succeed', async () => {
             const busyError = new Error('Database busy');
             busyError.code = 'SQLITE_BUSY';
@@ -103,6 +163,21 @@ describe('core.js DB', () => {
             const result = await coreDb.batchWithRetry(['INSERT INTO x VALUES (1)'], 'write');
             expect(result).toEqual([{ rowsAffected: 1 }]);
             expect(mockClient.batch).toHaveBeenCalledWith(expect.any(Array), 'write');
+        });
+
+        it('should normalize object statements and convert undefined args to null in batch', async () => {
+            mockClient.batch.mockResolvedValue([{ rowsAffected: 1 }, { rowsAffected: 1 }]);
+            await coreDb.batchWithRetry([
+                'INSERT INTO x VALUES (1)',
+                { sql: 'INSERT INTO y (a, b) VALUES (?, ?)', args: ['val', undefined] },
+                { sql: 'DELETE FROM z' }
+            ], 'write');
+
+            expect(mockClient.batch).toHaveBeenCalledWith([
+                'INSERT INTO x VALUES (1)',
+                { sql: 'INSERT INTO y (a, b) VALUES (?, ?)', args: ['val', null] },
+                { sql: 'DELETE FROM z', args: [] }
+            ], 'write');
         });
 
         it('should retry batch on SQLITE_BUSY', async () => {
