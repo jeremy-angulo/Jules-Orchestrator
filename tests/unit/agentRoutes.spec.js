@@ -48,6 +48,17 @@ test('Agent Routes - GET / returns list of agents', async () => {
     expect(res.body.agents).toHaveLength(1);
 });
 
+test('Agent Routes - GET / handles database error with 500', async () => {
+    const router = await setupRouter({
+        database: { listAgents: vi.fn(async () => { throw new Error('DB Error'); }) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app).get('/agents');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('DB Error');
+});
+
 test('Agent Routes - POST / creates an agent', async () => {
     const createSpy = vi.fn(async () => true);
     const router = await setupRouter({ database: { createAgent: createSpy } });
@@ -55,10 +66,41 @@ test('Agent Routes - POST / creates an agent', async () => {
 
     const res = await request(app)
         .post('/agents')
-        .send({ name: 'New', prompt: 'test' });
+        .send({ name: 'Agent 1', prompt: 'test' });
 
     expect(res.status).toBe(201);
     expect(createSpy).toHaveBeenCalled();
+});
+
+test('Agent Routes - POST / returns 400 when name or prompt is missing or empty', async () => {
+    const router = await setupRouter();
+    const app = createApp(router);
+
+    const res1 = await request(app).post('/agents').send({ prompt: 'test' });
+    expect(res1.status).toBe(400);
+    expect(res1.body.error).toBe('name and prompt are required.');
+
+    const res2 = await request(app).post('/agents').send({ name: 'Agent 1' });
+    expect(res2.status).toBe(400);
+    expect(res2.body.error).toBe('name and prompt are required.');
+
+    const res3 = await request(app).post('/agents').send({ name: '  ', prompt: 'test' });
+    expect(res3.status).toBe(400);
+    expect(res3.body.error).toBe('name and prompt are required.');
+});
+
+test('Agent Routes - POST / handles database error with 500', async () => {
+    const router = await setupRouter({
+        database: { createAgent: vi.fn(async () => { throw new Error('Create Error'); }) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app)
+        .post('/agents')
+        .send({ name: 'New Agent', prompt: 'do task' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Create Error');
 });
 
 test('Agent Routes - GET /:id returns agent', async () => {
@@ -96,6 +138,17 @@ test('Agent Routes - DELETE /:id deletes agent', async () => {
     expect(deleteSpy).toHaveBeenCalledWith('1');
 });
 
+test('Agent Routes - DELETE /:id returns 404 if agent not found', async () => {
+    const router = await setupRouter({
+        database: { getAgent: vi.fn(async () => null) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app).delete('/agents/999');
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Agent not found.');
+});
+
 test('Agent Routes - POST /reorder reorders agents', async () => {
     const reorderSpy = vi.fn(async () => true);
     const router = await setupRouter({ database: { reorderAgents: reorderSpy } });
@@ -107,6 +160,18 @@ test('Agent Routes - POST /reorder reorders agents', async () => {
 
     expect(res.status).toBe(200);
     expect(reorderSpy).toHaveBeenCalledWith([1, 2, 3]);
+});
+
+test('Agent Routes - POST /reorder returns 400 if ids is not an array', async () => {
+    const router = await setupRouter();
+    const app = createApp(router);
+
+    const res = await request(app)
+        .post('/agents/reorder')
+        .send({ ids: 'invalid' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('ids must be an array');
 });
 
 test('Agent Routes - POST /run-once triggers execution', async () => {
@@ -121,4 +186,31 @@ test('Agent Routes - POST /run-once triggers execution', async () => {
     expect(res.status).toBe(202);
     expect(res.body.runnerId).toBe('r-123');
     expect(runSpy).toHaveBeenCalledWith('p1', 1, expect.objectContaining({ instructions: 'go' }));
+});
+
+test('Agent Routes - POST /run-once handles custom agentId and empty body', async () => {
+    const runSpy = vi.fn(async () => 'r-custom');
+    const router = await setupRouter({ controlCenter: { runAgentOnce: runSpy } });
+    const app = createApp(router);
+
+    const res = await request(app)
+        .post('/agents/run-once/p1/custom');
+
+    expect(res.status).toBe(202);
+    expect(res.body.runnerId).toBe('r-custom');
+    expect(runSpy).toHaveBeenCalledWith('p1', 'custom', { instructions: undefined, media: undefined });
+});
+
+test('Agent Routes - POST /run-once handles runner execution error with 500', async () => {
+    const router = await setupRouter({
+        controlCenter: { runAgentOnce: vi.fn(async () => { throw new Error('Run Once Error'); }) }
+    });
+    const app = createApp(router);
+
+    const res = await request(app)
+        .post('/agents/run-once/p1/1')
+        .send({ instructions: 'go' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Run Once Error');
 });
