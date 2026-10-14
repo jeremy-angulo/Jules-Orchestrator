@@ -71,6 +71,42 @@ test('processPage - when no PR is created, marks page status as OK', async () =>
   });
 });
 
+test('processPage & runSiteCheckCycle - handles siteCheckAuth parameter correctly', async () => {
+  vi.useFakeTimers();
+
+  const page = { id: 100, url: '/auth-test', requires_auth: true, requires_admin: false };
+  const project = { id: 'p1' };
+  const siteCheckAuth = { userToken: 'test-token-123' };
+
+  mockDb.pickAndLockSitePage.mockResolvedValueOnce(page).mockResolvedValue(null);
+  mockJulesClient.startAndMonitorSession.mockResolvedValue(false);
+
+  let runCount = 0;
+  const shouldStop = () => {
+    runCount++;
+    return runCount > 2;
+  };
+
+  const cyclePromise = siteCheckService.runSiteCheckCycle(project, {
+    siteCheckAuth,
+    pauseMs: 1000,
+    shouldStop,
+  });
+
+  await vi.advanceTimersByTimeAsync(1000);
+  await vi.advanceTimersByTimeAsync(60000);
+
+  await cyclePromise;
+
+  expect(mockDb.updateSitePageResult).toHaveBeenCalledWith(100, {
+    status: 'OK',
+    screenshotPath: 'agent-screenshots/fr/auth-test/desktop.png',
+    issues: null,
+  });
+
+  vi.useRealTimers();
+});
+
 test('processPage - uses default locale fr when locale argument is omitted', async () => {
   const page = { id: 80, url: '/contact', requires_auth: false, requires_admin: false };
   const project = { id: 'p1' };
