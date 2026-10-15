@@ -27,7 +27,68 @@ describe('githubClient Coverage Expansion', () => {
     vi.clearAllMocks();
   });
 
-  describe('checkAndMergePR polling state transitions', () => {
+  describe('getNextGitHubIssue edge cases', () => {
+    it('should return null when all open issues are pull requests', async () => {
+      const mockIssues = [
+        { id: 1, number: 10, title: 'PR 1', pull_request: {} },
+        { id: 2, number: 11, title: 'PR 2', pull_request: {} }
+      ];
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => mockIssues
+      }));
+
+      const issue = await getNextGitHubIssue(mockProject);
+      expect(issue).toBeNull();
+    });
+
+    it('should return null when issue list is empty', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => []
+      }));
+
+      const issue = await getNextGitHubIssue(mockProject);
+      expect(issue).toBeNull();
+    });
+  });
+
+  describe('checkAndMergePR edge cases and state transitions', () => {
+    it('should handle PR with missing title gracefully during checkAndMergePR', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ number: 15, merged: false, mergeable: true, mergeable_state: 'clean' })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200
+        });
+
+      vi.stubGlobal('fetch', fetchMock);
+
+      await checkAndMergePR(mockProject, 15);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('should stop and return early when mergeable is false or mergeable_state is blocked', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({ number: 20, merged: false, mergeable: false, mergeable_state: 'dirty' })
+        });
+
+      vi.stubGlobal('fetch', fetchMock);
+
+      await checkAndMergePR(mockProject, 20);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('should poll multiple times when mergeable is null and proceed once mergeable becomes true', async () => {
       const fetchMock = vi.fn()
         // Iteration 1: null mergeable
@@ -243,6 +304,25 @@ describe('githubClient Coverage Expansion', () => {
       const res = await mergePRWithResult(mockProject, 99);
       expect(res.status).toBe('failed');
       expect(res.reason).toBe('Fatal network crash string');
+    });
+
+    it('should handle exception during initial merge failure error text stream reading', async () => {
+      const fetchMock = vi.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ merged: false, state: 'open', draft: false, mergeable: true, mergeable_state: 'clean' })
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 409,
+          text: async () => { throw new Error('Text stream aborted'); }
+        });
+
+      vi.stubGlobal('fetch', fetchMock);
+
+      const res = await mergePRWithResult(mockProject, 101);
+      expect(res.status).toBe('failed');
+      expect(res.reason).toBe('409: ');
     });
   });
 
