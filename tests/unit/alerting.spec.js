@@ -73,4 +73,29 @@ describe('alerting.js - sendOpsAlert', () => {
     const result = await sendOpsAlert('Test Title');
     expect(result).toBe(false);
   });
+
+  it('should handle non-Error exceptions or error objects without a message property', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    // String exception
+    global.fetch.mockRejectedValue('Raw string error message');
+    const resultString = await sendOpsAlert('Test Title');
+    expect(resultString).toBe(false);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[Alerting] Failed to send alert:',
+      'Raw string error message'
+    );
+
+    // Object exception without message property
+    const customErrObj = { code: 500, detail: 'Internal failure' };
+    global.fetch.mockRejectedValue(customErrObj);
+    const resultObj = await sendOpsAlert('Test Title');
+    expect(resultObj).toBe(false);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      '[Alerting] Failed to send alert:',
+      customErrObj
+    );
+
+    consoleSpy.mockRestore();
+  });
 });
